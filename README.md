@@ -254,9 +254,18 @@ Two runs: DLSS 5 off, then on. G-Sync was active and the game focused 100% of ev
   - With windowed G-Sync, the TV refreshes when DWM presents. So these uneven times are what G-Sync follows, and on this VA TV the brightness follows the refresh interval. The user's ranking (60 bad, 100 better, DLSS 5 worse at 100, 116 almost clean) matches the DWM swing column, not the game column.
 - **Why other games don't do this:** they present with the flip model (all D3D12, most modern D3D11) or in exclusive fullscreen, so the GPU flips their frames straight to the screen (independent flip), and G-Sync's refreshes are the game's frames. FFXIV's D3D11 swap chain is the legacy blit model (`BLT_DISCARD`) in a borderless window: every frame is copied into DWM's composition, and DWM's own presentation timing sits between the game and G-Sync.
 - **Caveat:** `DwmGetCompositionTimingInfo` reports DWM's view. Intervals under 8.3 ms can't be real refreshes on a 120 Hz panel, so the exact scanout times may differ. The jitter between DWM and the game's even frames is still measured directly.
+- **Repeat at 14:13 and 14:16 (1.5.1, display confirmed HDR10):** same pattern.
+
+  | cap | DWM swings, DLSS 5 on | DWM swings, DLSS 5 off |
+  |---|---|---|
+  | 60 | 57–60% | 61–65% |
+  | 100 | 26–27% | 12–27% |
+  | 116 | 4–9% | 24–29% (154–184 gaps of 16.8 ms per 18 s) |
+
+  The game's frames stayed at 0.0–1.1% swings throughout. The earlier "no flicker" moment (14:07–14:09) was at 116 with DLSS 5 on, which is the lowest DWM jitter here. Windows HDR was on in every run. Optimizations for windowed games was already on globally.
 - **Next:** put FFXIV on the direct path and run `/dlssfix test` again:
-  1. Windows 11 **Optimizations for windowed games** (Settings > System > Display > Graphics). It upgrades the blit-model swap chain to flip model in borderless, so independent flip becomes possible. Restart the game.
-  2. FFXIV **exclusive fullscreen** (System Configuration > Display Settings > Screen Mode: Full Screen).
+  1. **Windows HDR off** (Win+Alt+B): the SDR swap chain then needs no HDR conversion in DWM, so the flip upgrade can go to independent flip. The TEST line shows `display SDR`.
+  2. FFXIV **exclusive fullscreen** (System Configuration > Display Settings > Screen Mode: Full Screen): no DWM at all.
 
 ## Findings (2026-11-04 test rounds)
 
