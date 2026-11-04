@@ -282,6 +282,14 @@ FFXIV's own menu didn't list 3840x2160 for full screen, though DXGI and GDI both
 - **This is the steadiest refresh the setup can produce.** Any flicker left here is not refresh-rate variation.
 - **Alt-tab drops the game back to windowed** (`SWAPCHAIN ... windowed`), and returning re-enters fullscreen.
 
+### PresentMon (2026-11-04 15:03, borderless, during `/dlssfix test` step 1: cap 60, G-Sync active, DLSS 5 on)
+
+- **PresentMode = `Composed: Copy with GPU GDI` for all 1219 frames.** Windows' "Optimizations for windowed games" doesn't upgrade FFXIV's swap chain to flip model, although it's on. So in borderless every frame is a GPU copy into DWM's composition.
+- **Display timing from ETW (`MsBetweenDisplayChange`):** p05 15.04 / p50 16.65 / p95 17.63 / p99 18.78 ms, 4.0% swings. 90% of intervals are within 15.5–18 ms; about 10% are displaced (50 at 7.5–12.5 ms, 35 at 12.5–15.5, 35 at 18–25, 4 over 25).
+- **Present timing:** p05 14.61 / p50 16.66 / p95 17.06 ms, 1.7% swings.
+- **Correction:** `DwmGetCompositionTimingInfo`, which the TEST lines use, overstates the jitter. The same 20 s showed 59% swings there. Its vblank/compose times under windowed VRR are DWM's bookkeeping, not scanout. The ranking between caps held, but PresentMon's numbers are the real display timing.
+- **So:** borderless still displaces about 1 in 10 frames at 60 fps, while exclusive fullscreen shows the refresh exactly at the cap. Each displaced frame is a short refresh-rate change that the VA TV shows as a brightness blip.
+
 ## Findings (2026-11-04 test rounds)
 
 - **Lock works:** `DLSS in=2227x1253 -> 3840x2160 STABLE` while zooming. Without it, Balanced at 4K moved between 1080 and 2160 lines.
