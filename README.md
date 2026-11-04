@@ -267,6 +267,21 @@ Two runs: DLSS 5 off, then on. G-Sync was active and the game focused 100% of ev
   1. **Windows HDR off** (Win+Alt+B): the SDR swap chain then needs no HDR conversion in DWM, so the flip upgrade can go to independent flip. The TEST line shows `display SDR`.
   2. FFXIV **exclusive fullscreen** (System Configuration > Display Settings > Screen Mode: Full Screen): no DWM at all.
 
+### Exclusive fullscreen (2026-11-04 14:47, 4K 119.88 Hz, DLSS 5 on)
+
+FFXIV's own menu didn't list 3840x2160 for full screen, though DXGI and GDI both offer it at 120 / 119.88 / 144 / 100 / 60 Hz. It was set directly in `FFXIV.cfg`: `ScreenMode 1`, `FullScreenWidth 3840`, `FullScreenHeight 2160`, `Refreshrate 120`. The game accepted it.
+
+| cap | game frames: p05–p99, swings | refresh measured by DXGI | DWM compositions (per 18 s) |
+|---|---|---|---|
+| 60 | 16.66–16.73 ms, 0.0% | 60.5–61.5 Hz | 0–67 |
+| 100 | 10.00–10.08 ms, 0.0% | 100.0 Hz | 0 |
+| 116 | 8.62–8.78 ms, 0.0% | 116.0 Hz | 2 |
+
+- **G-Sync on the fullscreen path:** `gsync(fsVrr)=True iFlip=True` the whole time.
+- **The compositor is out of the path.** The TV refreshes once per game frame, at the cap's exact rate. At 60 there are a couple of extra refreshes per second.
+- **This is the steadiest refresh the setup can produce.** Any flicker left here is not refresh-rate variation.
+- **Alt-tab drops the game back to windowed** (`SWAPCHAIN ... windowed`), and returning re-enters fullscreen.
+
 ## Findings (2026-11-04 test rounds)
 
 - **Lock works:** `DLSS in=2227x1253 -> 3840x2160 STABLE` while zooming. Without it, Balanced at 4K moved between 1080 and 2160 lines.
