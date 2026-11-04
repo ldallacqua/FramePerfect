@@ -235,6 +235,29 @@ After switching Monitor Technology from Fixed Refresh back to G-SYNC, there was 
 - **The leftover flicker:** in two of the three DLSS 5 windows, frames ran at p50 8.82–8.92 ms (~113 fps), and Reflex latency (sim start → GPU done) rose from ~5 to ~23 ms. So DLSS 5 couldn't hold 116 there; the GPU was the bottleneck and frames queued. G-Sync follows that small drift. A cap DLSS 5 always holds (e.g. 110) should remove it and cut that latency. The earlier 100 fps test doesn't count: it ran on 1.4.0, with the hitch.
 - **The display:** a **Samsung QN90D** (EDID `SAM7572`, 43"), a VA mini-LED TV. VRR flicker on this series is widely reported by owners and tied to **local dimming** ([Samsung community](https://eu.community.samsung.com/t5/tv/qn90d-50-inch-possible-qa-fault-problem/m-p/11711787/highlight/true), [QN90B thread](https://eu.community.samsung.com/t5/tv/qn90b-vrr-flicker-after-update-1403-6/td-p/6329585)). If 1.4.1 still flickers with flat presents, try Local Dimming Low or Off in Game Mode and the latest firmware. Otherwise, Fixed Refresh for the game is the known flicker-free setting.
 
+### `/dlssfix test` (2026-11-04 13:57 and 14:00): the game's frames are even, DWM's refreshes are not
+
+Two runs: DLSS 5 off, then on. G-Sync was active and the game focused 100% of every step. Swings are refresh-to-refresh changes >15%.
+
+| cap | DLSS 5 | game frames: p05–p99, swings | DWM refreshes: p05 / p50 / p95, swings | user |
+|---|---|---|---|---|
+| 60 | off | 16.66–16.73 ms, 0.0% | 12.4 / 16.7 / 20.8 ms, **62–63%** | bad |
+| 60 | on | 16.66–16.73 ms, 0.0% | 12.4 / 16.7 / 20.8 ms, **55–63%** | bad |
+| 100 | off | 10.00–10.07 ms, 0.0% | 9.15 / 10.0 / 10.9 ms, 10–11% | better |
+| 100 | on | 10.00–10.07 ms, 0.0% | 9.1 / 10.0 / 12.5 ms, **29–32%** | worse than off |
+| 116 | off | 8.62–8.70 ms, 0.0% | 0.7 / 8.6 / 16.8 ms, 21–27% (134–175 gaps of 16.8 ms per 18 s) | |
+| 116 | on | 8.61–8.98 ms, 0.2–0.3% | 8.45 / 8.6 / 8.75 ms, 6–9% (40–53 gaps of 16.8 ms per 18 s) | "once in a while" |
+
+- **What the numbers show:** the game hands over perfectly even frames (0.0% swings at every cap). The Windows compositor (DWM) shows each of them, with one composition per game frame, but at uneven times.
+  - At 60 fps the refresh interval jumps between ~12.5, 16.7 and 20.8 ms, i.e. 16.7 ± 4.2 ms, half a 120 Hz period. That is a 48–80 Hz swing every frame.
+  - At 116 the refreshes run on time, except for 16.8 ms gaps followed by a double refresh.
+  - With windowed G-Sync, the TV refreshes when DWM presents. So these uneven times are what G-Sync follows, and on this VA TV the brightness follows the refresh interval. The user's ranking (60 bad, 100 better, DLSS 5 worse at 100, 116 almost clean) matches the DWM swing column, not the game column.
+- **Why other games don't do this:** they present with the flip model (all D3D12, most modern D3D11) or in exclusive fullscreen, so the GPU flips their frames straight to the screen (independent flip), and G-Sync's refreshes are the game's frames. FFXIV's D3D11 swap chain is the legacy blit model (`BLT_DISCARD`) in a borderless window: every frame is copied into DWM's composition, and DWM's own presentation timing sits between the game and G-Sync.
+- **Caveat:** `DwmGetCompositionTimingInfo` reports DWM's view. Intervals under 8.3 ms can't be real refreshes on a 120 Hz panel, so the exact scanout times may differ. The jitter between DWM and the game's even frames is still measured directly.
+- **Next:** put FFXIV on the direct path and run `/dlssfix test` again:
+  1. Windows 11 **Optimizations for windowed games** (Settings > System > Display > Graphics). It upgrades the blit-model swap chain to flip model in borderless, so independent flip becomes possible. Restart the game.
+  2. FFXIV **exclusive fullscreen** (System Configuration > Display Settings > Screen Mode: Full Screen).
+
 ## Findings (2026-11-04 test rounds)
 
 - **Lock works:** `DLSS in=2227x1253 -> 3840x2160 STABLE` while zooming. Without it, Balanced at 4K moved between 1080 and 2160 lines.
