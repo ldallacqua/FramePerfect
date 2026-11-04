@@ -1,0 +1,174 @@
+# DLSS Fix (FFXIV / Dalamud)
+
+A Dalamud plugin that locks Final Fantasy XIV's DLSS to a fixed internal resolution instead of the game's dynamic resolution, so the image no longer goes soft whenever the camera moves.
+
+- **Fixed DLSS resolution:** DLAA, Quality, Balanced, Performance, Ultra Performance, or a custom percentage.
+- **Model preset:** the game hard-codes the old CNN preset C. The plugin defaults to the preset NVIDIA recommends for the loaded `nvngx_dlss.dll`, or you can pick J, K, L, M or F.
+- **Sharpness slider:** AMD CAS runs on the DLSS output, before the UI. DLSS has ignored its own sharpness setting since 2.5.1.
+- **Game settings check:** reads the game's own graphics options and tells you what to change, in the window and in chat.
+- **Debug tab:** loaded DLL versions, a per-frame flash/flicker detector and frame-pacing stats, for checking changes with numbers instead of by eye.
+
+Works alongside RenoDX's DLSS 5 (Neural Rendering) addon. See [DLSS 5 and G-Sync](#dlss-5-and-g-sync).
+
+## Install (dev plugin)
+
+1. Build it (see [Build](#build)), or take `XivDlssFix.dll`, `XivDlssFix.json` and `XivDlssFix.deps.json` from `bin\Release\`.
+2. Copy them to a folder such as `%APPDATA%\XIVLauncher\devPlugins\XivDlssFix\`.
+3. In Dalamud: Settings > Experimental > Dev Plugin Locations, add that folder, then enable **DLSS Fix** under `/xlplugins` > Dev Tools.
+4. In the game: System Configuration > Graphics Settings > Resolution > **Graphics Upscaling = NVIDIA DLSS**. The plugin does nothing with FSR, and it tells you so.
+
+## Window
+
+`/dlssfix` opens it.
+
+**Settings tab:** enable, DLSS mode, resolution lock, model preset, sharpness, chat notices. It also has the game settings checklist and the current render resolution.
+
+**Debug tab:** flash detector, "Reapply now" (rebuilds the render targets; the screen blinks once), "Reset DLSS history", RTM range, evaluate rate, loaded DLLs, RenoDX DLSS 5 state, and the log path.
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `/dlssfix` | open the window |
+| `/dlssfix status` | real DLSS input/output size, loaded DLLs, flash count, game settings to change |
+| `/dlssfix mode dlaa\|quality\|balanced\|performance\|ultra\|custom\|game` | DLSS mode (`game` = leave the game's dynamic resolution alone, observe only) |
+| `/dlssfix custom 75` | custom scale, 33–100% |
+| `/dlssfix preset default\|k\|j\|m\|l\|f\|game` | DLSS model preset |
+| `/dlssfix sharp 35` | CAS sharpness in % (0 = off) |
+| `/dlssfix lock on\|off` | resolution lock |
+| `/dlssfix on\|off` | enable / disable the plugin |
+| `/dlssfix apply` | rebuild the render targets now |
+| `/dlssfix reset` | reset DLSS / DLSS 5 history on the next frame (diagnostic) |
+| `/dlssfix flash on\|off` | flash detector |
+| `/dlssfix mv game\|render` | motion vector scale (diagnostic; keep `game`) |
+
+## Game settings check
+
+For each game option that matters, the window shows `[OK]`, `[CHANGE]`, `[RECOMMENDED]` or `[INFO]`. Option names are the English client's. Chat repeats this once after login and whenever one of them changes.
+
+| Option | Where | What the plugin wants |
+|---|---|---|
+| Graphics Upscaling | System Configuration > Graphics Settings > Resolution | **NVIDIA DLSS** (required) |
+| Frame Rate Threshold | same | anything while the lock is on. Without the lock it decides when the game lowers the resolution. |
+| 3D Resolution Scaling | same | ignored with DLSS |
+| Radial Blur | System Configuration > Graphics Settings > Effects | **off** (recommended; it blurs the image when the camera moves) |
+
+## How it works
+
+Reverse engineered from `ffxiv_dx11.exe` 2026.10.16. Offsets are relative to the module base and will move with game patches.
+
+| Where | What |
+|---|---|
+| `GraphicsConfig+0x54` | upscaler: 1 = FSR, 2 = DLSS. With DLSS the game **forces** dynamic resolution and ignores the menu option. |
+| `GraphicsConfig+0x55` | hidden DLSS mode: 0 auto, 1 DLAA, 2 Ultra Quality, 3 Quality, 4 Balanced, 5 Performance, 6 Ultra Performance. "Auto" at 4K = Performance. |
+| `GraphicsConfig+0x49` | Frame Rate Threshold: 0 Always Enabled, 1 Below 30 fps, 2 Below 60 fps. Read at `+0x2DA946`; it only sets the dynamic-resolution controller's FPS target. |
+| `DlssManager::SelectMode` (`+0x374590`) | asks NGX for the optimal / dynamic min / dynamic max size of the mode |
+| callback at `RenderTargetManager+0x730` (`+0x352350`) | hands that range (min..max) to the resolution controller |
+| controller (`+0x2DA5B0`, fields `RTM+0x700..0x714`) | steps the height by 9/18 lines between min and max from GPU time, **only while the camera moves** |
+| `DlssManager::CreateFeature` (`+0x374CB0`) | creates the DLSS feature with preset C, flags `MVLowRes\|DepthInverted` |
+| DLSS evaluate args | `+0x08` output texture, `+0x30` motion vector scale, `+0x48` render sub-rectangle, `+0x50` reset flag |
+
+The fix:
+
+1. Before `SelectMode`, write the chosen mode to `GraphicsConfig+0x55`. Custom uses the game's own scale path at `DlssManager+0x180`.
+2. In the range callback, return **min = max = optimal**, so the dynamic controller has nowhere to go.
+3. On feature creation, replace the preset.
+4. Request a render-target rebuild (`Device+0x7A`, the same flag the game uses on resize) when settings change, after login, or when you switch FSR → DLSS.
+5. After each evaluate, run the CAS and probe compute passes on the DLSS output texture. They run on the game's D3D11 immediate context and save and restore the compute-shader state.
+
+## DLSS 5 and G-Sync
+
+If you use RenoDX's DLSS 5 addon (`renodx-dlss5.addon64` + `nvngx_dlssnr.dll`) with G-Sync, the image can flicker **only while the camera moves**. That flicker is G-Sync (VRR), not the rendering:
+
+- Without DLSS 5 the game sits at its frame cap, so G-Sync has nothing to vary. DLSS 5 costs ~7 ms of GPU time per frame on an RTX 4090 at 4K, which pulls the game below the cap (~87 fps). The refresh rate then follows the frame times, and the panel's brightness changes with the refresh rate. This is the same VRR flicker you sometimes see on Windows desktop windows.
+- The rendered image is the same in the flickering and the smooth state: local flicker normalized by motion was ~640 per 1000 tiles in both. The flicker happens on the display.
+- Alt-tab stopped it because windowed G-Sync disengaged. "Reapply now" brought it back because rebuilding the buffers re-engaged G-Sync.
+- It kept flickering even with very even frames (11.1–12.3 ms, ~1% swings >15%). So the variation comes from how the DLSS 5 path (D3D11 → D3D12 bridge) presents frames, not only from the game's frame times.
+
+**Fix:** NVIDIA Control Panel > Manage 3D settings > Program Settings > `ffxiv_dx11.exe` > Monitor Technology: **Fixed Refresh**. That gave zero flicker at 75–92 fps. Other games keep G-Sync.
+
+Trade-off: possible tearing with V-Sync off, or slight judder with V-Sync on below the refresh rate. For perfectly even frames, use V-Sync on + a 60 fps cap.
+
+FFXIV's own frame limiter is no help here. It works in vblank-sized ticks: at a cap of 60, a frame that misses 16.7 ms waits until 33.3 ms. Frame times then alternate 16.7/33.3 ms (~51 fps while moving) and G-Sync alternates 60/30 Hz. A driver cap (NVIDIA Max Frame Rate, RTSS) spaces frames without skipping ticks.
+
+RenoDX settings that mattered (`ReShade.ini`, `[RenoDX.DLSS5]`):
+
+- `NRSourceEncoding=1`: FFXIV hands DLSS SDR color that is already tonemapped, in a float buffer. As linear HDR, the per-frame brightness normalizer pumped.
+- `NRLinearUnitNits` only applies to linear sources. `NRFeedMode=2` falls back to v1, because FFXIV passes no exposure texture.
+- Keep `NRNormTrace=0` and `NREditTrace=0` unless you're debugging; the edit trace writes a CSV every frame.
+
+## Findings (2026-11-04 test rounds)
+
+- **Lock works:** `DLSS in=2227x1253 -> 3840x2160 STABLE` while zooming. Without it, Balanced at 4K moved between 1080 and 2160 lines.
+- **Motion vector scale:** the game passes the display size even when rendering below 100%. A/B testing showed the game's value is correct (`render` blurs).
+- **History reset:** the game resets DLSS history only on the first evaluate after creating the feature, never on camera cuts. Forcing a reset (`/dlssfix reset`) reached DLSS and DLSS 5 but didn't change the flicker.
+- **Sharpness "blink on apply":** caused by jumping 0↔100% instantly. Strength now eases at 3 units/s, and the shader compiles on a worker thread when the plugin loads.
+- **Random flashes:** each one was a "Reapply now" rebuild (0.56 stop full-screen blink on the rebuild frame). Normal camera motion stays under 0.09 stop per frame.
+- **Ruled out for the DLSS 5 flicker:** the brightness normalizer (divisor fixed at 1.000), NR history drift, RenoDX detail stability, and motion vector scale (it flickered in DLAA too). The cause was G-Sync, as above.
+
+## Logs
+
+- Plugin: `%APPDATA%\XIVLauncher\pluginConfigs\XivDlssFix\dlssfix.log`
+  - `STATS ...: DLSS in=WxH [min, max, changes N] -> out=WxH | scale=% | STABLE/VARYING` every 5 s. This comes from the DLSS evaluate hook, so it is the real size going into DLSS.
+  - `SelectMode`, `RTM range ... LOCKED`, `CreateFeature ... preset X -> Y`, and the reason for every rebuild.
+  - With the flash detector on:
+    - `FLASH:` short light/dark blinks (≥0.08 stop that come back within 1–3 frames)
+    - `HITCH:` long frames
+    - `LOCAL flicker:` reversing tiles in a 64×36 grid, per 1000 tile-frames
+    - `FRAMES (pacing seen by G-Sync):` frame-time p05/p50/p95/p99 and % of frames that swing >15%
+- DLSS 5 (RenoDX): `ReShade.log` in the game folder (`DLSS5 Generic`, `NR-VERDICT`, `frame contract`). The plugin reads it incrementally on a worker thread for the Debug tab.
+
+## Next steps
+
+### Frame generation
+
+Wanted most with DLSS 5, since DLSS 5 takes the game down to ~75–90 fps at 4K.
+
+- **NVIDIA DLSS Frame Generation can't be added in-process.** Streamline's DLSS-G needs DirectX 12, and FFXIV is DX11. Same for AMD's FSR 3 frame generation: the FidelityFX SDK ships DX12/Vulkan backends only.
+- **Available now: NVIDIA Smooth Motion.** It is driver-level frame generation for DX11/DX12 games and has officially supported RTX 40 since August 2025. Turn it on in the NVIDIA App > Graphics > Program Settings > FFXIV > Smooth Motion. To measure: frame pacing with Fixed Refresh + V-Sync (e.g. a 60 fps base → 120 Hz), UI ghosting (Smooth Motion interpolates the final image, UI included), and whether it works with ReShade/RenoDX hooking DXGI.
+- **In-plugin option (big project):** the plugin already has everything frame generation needs from the DLSS evaluate call: color before the UI, depth, motion vectors, jitter and the render sub-rectangle. A real implementation would have to:
+  - share those textures with a D3D12 device
+  - run FSR 3.1 / XeFG frame interpolation there
+  - present through a D3D12 swap chain that replaces the game's D3D11 one, while keeping Dalamud's ImGui, ReShade and RenoDX working on top
+  
+  This is what OptiScaler does for DX12 games; its OptiFG is DX12-only today. Investigate only if Smooth Motion falls short.
+
+### Refresh rate, frame limiter and G-Sync
+
+FFXIV has no V-Sync option, and in borderless mode it seems to decide the refresh rate on its own. With two monitors at different refresh rates, the game rendered on one monitor but paced itself to the other monitor's refresh rate, which caused heavy stutter. The game's frame-rate limit options are fractions of the "main display" refresh rate (full, 1/2, 1/4). That suggests it reads the Windows *primary* display, not the monitor the window is on. To investigate:
+
+- Find how the limiter gets its refresh rate: `EnumDisplaySettings(NULL)` / primary `DXGI_OUTPUT` vs. `IDXGISwapChain::GetContainingOutput`. Also find how it waits: sleep granularity, `WaitForVBlank`, or Present sync interval. That last one explains the 16.7/33.3 ms quantization.
+- Log the real Present path:
+  - sync interval and flags
+  - swap effect (flip model vs. blit)
+  - `DXGI_PRESENT_ALLOW_TEARING`
+  - whether borderless gets Independent Flip (needed for clean G-Sync in a window)
+- Possible plugin features:
+  - pace against the refresh rate of the monitor the window is actually on
+  - replace the tick-based limiter with a precise one (waitable timer + short spin)
+  - warn when the game and the primary monitor disagree
+- Then retest DLSS 5 with G-Sync: with steady pacing and a cap below what DLSS 5 can sustain, G-Sync might work without needing Fixed Refresh.
+
+### NVIDIA Reflex
+
+FFXIV has no Reflex support. Reflex works on DX11 through NVAPI, and a plugin can drive it:
+
+- `NvAPI_D3D_SetSleepMode`, which also gives a precise driver frame cap (`minimumIntervalUs`) and could fix the limiter problem above
+- `NvAPI_D3D_Sleep` once per frame before input sampling, via the Framework update hook
+- `NvAPI_D3D_SetLatencyMarker` for simulation / render-submit / present markers, so the NVIDIA overlay and FrameView can measure latency
+
+Reflex is also a prerequisite for frame generation feeling responsive, so this comes before or with any frame generation work.
+
+## Revert
+
+- Plugin: disable it in `/xlplugins` (Dev Tools), or `/dlssfix off`.
+- DLSS 5: delete `dxgi.dll`, `renodx-dlss5.addon64` and `nvngx_dlssnr.dll` from the game folder.
+- If you replaced `nvngx_dlss.dll` with a newer one, restore your backup. Game patches can also put the original 3.5.10 back. The Debug tab shows the version that's actually loaded.
+
+## Build
+
+```
+dotnet build -c Release
+```
+
+Needs the .NET 10 SDK and `Dalamud.NET.Sdk/15.0.0`. It builds against the Dalamud in `%APPDATA%\XIVLauncher\addon\Hooks\dev`. Output: `bin\Release\`.

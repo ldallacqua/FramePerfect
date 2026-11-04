@@ -1,0 +1,208 @@
+using System;
+using Dalamud.Game.Command;
+using Dalamud.Interface.Windowing;
+using Dalamud.IoC;
+using Dalamud.Plugin;
+using Dalamud.Plugin.Services;
+
+namespace XivDlssFix;
+
+public sealed class Plugin : IDalamudPlugin
+{
+    private const string CommandName = "/dlssfix";
+
+    [PluginService] internal static IDalamudPluginInterface PluginInterface { get; private set; } = null!;
+    [PluginService] internal static IGameInteropProvider GameInterop { get; private set; } = null!;
+    [PluginService] internal static ISigScanner SigScanner { get; private set; } = null!;
+    [PluginService] internal static IFramework Framework { get; private set; } = null!;
+    [PluginService] internal static ICommandManager Commands { get; private set; } = null!;
+    [PluginService] internal static IChatGui Chat { get; private set; } = null!;
+    [PluginService] internal static IPluginLog PluginLog { get; private set; } = null!;
+    [PluginService] internal static IClientState ClientState { get; private set; } = null!;
+
+    private readonly WindowSystem windows = new("XivDlssFix");
+    private readonly ConfigWindow configWindow;
+    private readonly GameSettingsNotifier notifier;
+
+    internal Configuration Config { get; }
+
+    internal FileLog Log { get; }
+
+    internal DlssController Controller { get; }
+
+    public Plugin()
+    {
+        this.Config = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
+        this.Log = new FileLog(PluginInterface.GetPluginConfigDirectory());
+        this.Controller = new DlssController(this.Config, this.Log);
+        this.notifier = new GameSettingsNotifier(this);
+
+        this.configWindow = new ConfigWindow(this);
+        this.windows.AddWindow(this.configWindow);
+
+        Commands.AddHandler(CommandName, new CommandInfo(this.OnCommand)
+        {
+            HelpMessage = "Opens the window. /dlssfix status | mode <dlaa|quality|balanced|performance|ultra|custom|game> | custom <33-100> | preset <default|j|k|l|m|f|game> | sharp <0-100> | lock <on|off> | flash <on|off> | reset | on | off | apply",
+        });
+
+        PluginInterface.UiBuilder.Draw += this.windows.Draw;
+        PluginInterface.UiBuilder.OpenConfigUi += this.ToggleWindow;
+        PluginInterface.UiBuilder.OpenMainUi += this.ToggleWindow;
+        Framework.Update += this.OnFrameworkUpdate;
+    }
+
+    private void ToggleWindow() => this.configWindow.Toggle();
+
+    private void OnFrameworkUpdate(IFramework framework)
+    {
+        try
+        {
+            this.Controller.Update();
+            this.notifier.Tick();
+        }
+        catch (Exception e)
+        {
+            this.Log.Error($"update: {e}");
+        }
+    }
+
+    private void OnCommand(string command, string args)
+    {
+        var parts = args.Trim().ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0)
+        {
+            this.ToggleWindow();
+            return;
+        }
+
+        var changed = false;
+        switch (parts[0])
+        {
+            case "status":
+                var s = this.Controller.Status;
+                var msg = $"[DLSS Fix] {this.Controller.DescribeSettings()} | DLSS {s.RenderW}x{s.RenderH} -> {s.OutputW}x{s.OutputH} " +
+                          $"({(s.OutputH != 0 ? 100.0 * s.RenderH / s.OutputH : 0):0.0}%) {(s.Stable ? "stable" : "varying")} | NGX {s.NgxMode} | hooks {(this.Controller.HooksOk ? "ok" : "FAILED")}";
+                Chat.Print(msg);
+                var rt = this.Controller.Runtime;
+                var dll = $"[DLSS Fix] upscaler: {rt.Upscaler} | NR: {rt.NeuralRendering} (runtime {rt.NrRuntimeVersion}, {rt.NrState}) | sharpness {this.Config.Sharpness * 100:0}%";
+                Chat.Print(dll);
+                var probe = this.Controller.Probe;
+                var flash = $"[DLSS Fix] flashes detected: {probe.TotalFlashes} (last: {probe.LastFlash}) | detector {(this.Config.FlashDetector ? probe.State : "off")}";
+                Chat.Print(flash);
+                foreach (var c in GameSettings.Evaluate(GameSettings.Read(), this.Config))
+                    if (c.Level != CheckLevel.Ok)
+                        Chat.Print($"[DLSS Fix] {GameSettings.LevelTag(c.Level)} {c.Option} = {c.Current}: {c.Advice}");
+                this.Log.Info($"/dlssfix status: {msg} || {dll} || {flash}");
+                return;
+            case "reset":
+                this.Controller.RequestHistoryReset("command /dlssfix reset");
+                Chat.Print("[DLSS Fix] DLSS / DLSS 5 history will be reset on the next frame");
+                return;
+            case "flash" when parts.Length > 1:
+                this.Config.FlashDetector = parts[1] is "on" or "1" or "true";
+                this.Config.Save();
+                this.Controller.OnSettingsChanged(rebuild: false);
+                Chat.Print($"[DLSS Fix] flash detector: {(this.Config.FlashDetector ? "on" : "off")}");
+                return;
+            case "sharp" when parts.Length > 1 && float.TryParse(parts[1].TrimEnd('%'), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var sharp):
+                this.Config.Sharpness = Math.Clamp(sharp / 100f, 0f, 1f);
+                this.Config.Save();
+                this.Controller.OnSettingsChanged(rebuild: false);
+                Chat.Print($"[DLSS Fix] sharpness: {this.Config.Sharpness * 100:0}%");
+                return;
+            case "on":
+                this.Config.Enabled = true;
+                changed = true;
+                break;
+            case "off":
+                this.Config.Enabled = false;
+                changed = true;
+                break;
+            case "apply":
+                this.Controller.ApplyNow("command /dlssfix apply");
+                Chat.Print("[DLSS Fix] reapplying (the screen blinks once)...");
+                return;
+            case "mv":
+                this.Config.MvScale = parts.Length > 1
+                    ? (parts[1] is "render" or "r" ? MotionVectorScale.RenderSize : MotionVectorScale.Game)
+                    : (this.Config.MvScale == MotionVectorScale.Game ? MotionVectorScale.RenderSize : MotionVectorScale.Game);
+                this.Config.Save();
+                this.Controller.OnSettingsChanged(rebuild: false);
+                Chat.Print($"[DLSS Fix] motion vector scale: {(this.Config.MvScale == MotionVectorScale.Game ? "GAME (display)" : "RENDER")}");
+                return;
+            case "lock" when parts.Length > 1:
+                this.Config.LockResolution = parts[1] is "on" or "1" or "true";
+                changed = true;
+                break;
+            case "custom" when parts.Length > 1 && float.TryParse(parts[1].TrimEnd('%'), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var pct):
+                this.Config.CustomScalePercent = Math.Clamp(pct, 33f, 100f);
+                this.Config.Mode = DlssMode.Custom;
+                changed = true;
+                break;
+            case "mode" when parts.Length > 1:
+                DlssMode? mode = parts[1] switch
+                {
+                    "dlaa" => DlssMode.Dlaa,
+                    "quality" => DlssMode.Quality,
+                    "balanced" => DlssMode.Balanced,
+                    "performance" => DlssMode.Performance,
+                    "ultra" or "ultraperformance" => DlssMode.UltraPerformance,
+                    "custom" => DlssMode.Custom,
+                    "game" => DlssMode.GameDefault,
+                    _ => null,
+                };
+                if (mode == null)
+                {
+                    Chat.PrintError("[DLSS Fix] unknown mode");
+                    return;
+                }
+
+                this.Config.Mode = mode.Value;
+                changed = true;
+                break;
+            case "preset" when parts.Length > 1:
+                PresetOverride? preset = parts[1] switch
+                {
+                    "default" => PresetOverride.NvidiaDefault,
+                    "j" => PresetOverride.J,
+                    "k" => PresetOverride.K,
+                    "l" => PresetOverride.L,
+                    "m" => PresetOverride.M,
+                    "f" => PresetOverride.F,
+                    "game" or "c" => PresetOverride.Game,
+                    _ => null,
+                };
+                if (preset == null)
+                {
+                    Chat.PrintError("[DLSS Fix] unknown preset");
+                    return;
+                }
+
+                this.Config.Preset = preset.Value;
+                changed = true;
+                break;
+            default:
+                Chat.PrintError("[DLSS Fix] unknown command. Use /dlssfix status | mode | custom | preset | sharp | lock | flash | reset | on | off | apply");
+                return;
+        }
+
+        if (changed)
+        {
+            this.Config.Save();
+            this.Controller.OnSettingsChanged();
+            Chat.Print($"[DLSS Fix] {this.Controller.DescribeSettings()}");
+        }
+    }
+
+    public void Dispose()
+    {
+        Framework.Update -= this.OnFrameworkUpdate;
+        PluginInterface.UiBuilder.Draw -= this.windows.Draw;
+        PluginInterface.UiBuilder.OpenConfigUi -= this.ToggleWindow;
+        PluginInterface.UiBuilder.OpenMainUi -= this.ToggleWindow;
+        Commands.RemoveHandler(CommandName);
+        this.windows.RemoveAllWindows();
+        this.Controller.Dispose();
+        this.Log.Dispose();
+    }
+}

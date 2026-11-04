@@ -1,0 +1,8 @@
+{
+  "Author": "Lucas",
+  "Name": "DLSS Fix",
+  "Punchline": "DLSS at a fixed internal resolution, no dynamic resolution.",
+  "Description": "Locks FFXIV's DLSS to a fixed internal resolution (DLAA / Quality / Balanced / Performance / Ultra Performance / Custom) instead of the game's dynamic resolution. Also picks the DLSS model preset, adds CAS sharpening, and checks that the game's graphics options are set right.",
+  "ApplicableVersion": "any",
+  "Tags": ["dlss", "graphics", "upscaling"]
+}
