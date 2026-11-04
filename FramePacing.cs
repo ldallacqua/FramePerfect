@@ -73,6 +73,7 @@ internal sealed unsafe partial class FramePacing : IDisposable
     private uint? gameHzOriginal;
     private bool wroteRefresh;
     private DateTime nextDisplayCheck = DateTime.MinValue;
+    private double displayCheckMaxMs; // the once-a-second check on the framework thread: must stay well under 1 ms
     private string lastDisplayLine = string.Empty;
 
     // present thread statistics
@@ -236,7 +237,9 @@ internal sealed unsafe partial class FramePacing : IDisposable
         if (DateTime.Now >= this.nextDisplayCheck)
         {
             this.nextDisplayCheck = DateTime.Now.AddSeconds(1);
+            var sw = Stopwatch.StartNew();
             this.CheckDisplay();
+            this.displayCheckMaxMs = Math.Max(this.displayCheckMaxMs, sw.Elapsed.TotalMilliseconds);
         }
     }
 
@@ -548,7 +551,9 @@ internal sealed unsafe partial class FramePacing : IDisposable
                                 $"{100.0 * swings / (iv.Length - 1):0.0}% swings";
             this.log.Info($"  PRESENT: {iv.Length} presents | interval p05={Pct(iv, 0.05):0.00} p50={p50:0.00} p95={Pct(iv, 0.95):0.00} p99={Pct(iv, 0.99):0.00} ms " +
                           $"| swings >15% {100.0 * swings / (iv.Length - 1):0.0}% | in game present (limiter + Present) p50={ip[ip.Length / 2]:0.00} p95={ip[(int)(ip.Length * 0.95)]:0.00} ms " +
-                          $"| sync interval {SyncInterval(this.LimitMode)} ({LimitModeName(this.LimitMode, this.LimitFps)}) | vblank {this.vblankHz:0.0} Hz | {this.swapLine}");
+                          $"| sync interval {SyncInterval(this.LimitMode)} ({LimitModeName(this.LimitMode, this.LimitFps)}) | vblank {this.vblankHz:0.0} Hz | {this.swapLine} " +
+                          $"| plugin display check on game thread max {this.displayCheckMaxMs:0.00} ms, G-Sync poll {this.VrrPollMs:0.0} ms (worker)");
+            this.displayCheckMaxMs = 0;
         }
 
         var r = this.reflex;

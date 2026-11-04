@@ -168,7 +168,7 @@ FFXIV has no V-Sync option because **its frame-rate limit is V-Sync**. `Kernel::
   - Reflex sleep status: `bFsVrr` (G-Sync in **exclusive fullscreen** only; always False in borderless), control-panel V-Sync and iFlip
   - Reflex latency (simulation start → GPU done)
   - **G-Sync, read from the driver** (read-only, never changes NVIDIA settings):
-    - live: `NvAPI_Disp_GetVRRInfo` on the game's monitor, once a second, plus whether the game window has focus (windowed G-Sync only runs on the focused window)
+    - live: `NvAPI_Disp_GetVRRInfo` on the game's monitor, once a second on a worker thread (the call takes 5–10 ms), plus whether the game window has focus (windowed G-Sync only runs on the focused window)
     - saved: the G-Sync fields of the game's driver profile (`NvAPI_DRS_*`), every 15 s on a worker thread: "G-SYNC" (what NVIDIA Control Panel calls Monitor Technology), the hidden "Application Mode" and "Application Requested State", and the global mode
     - the checklist shows one "G-Sync" line and flags the hidden-fields case below
 
@@ -209,7 +209,21 @@ After switching Monitor Technology from Fixed Refresh back to G-SYNC, there was 
 - **Why:** the Control Panel doesn't show the two hidden fields and doesn't reset them when Monitor Technology goes from Fixed Refresh back to G-SYNC. This is a known Control Panel behavior ([Blur Busters forum](https://forums.blurbusters.com/viewtopic.php?p=108432)).
 - **The other user-set entries** in the profile were Power management mode (prefer maximum performance), Vertical Sync (use the 3D application setting), Vertical Sync Tear Control, Preferred refresh rate (application-controlled) and the SLI smooth AFR flag. A Restore resets these too.
 - **Fix:** NVIDIA Control Panel > Manage 3D settings > Program Settings > Final Fantasy XIV > **Restore**, or set both fields to "Fullscreen and Windowed" in NVIDIA Profile Inspector (Sync and Refresh). Then restart the game and check `GSYNC: ... active=True`.
-- **What the no-flicker session also had:** DLSS 5 ran at a flat 116 fps from 12:55 to 13:07, then was off (F6) from 13:08. So that session didn't test DLSS 5 + G-Sync at all.
+- **What the no-flicker session also had:** DLSS 5 ran at a flat 116 fps from 12:55 to 13:07, then was off (F6) from 13:08. G-Sync was off the whole time, so that session didn't test DLSS 5 + G-Sync at all.
+
+### With G-Sync really on (2026-11-04, after Restore)
+
+- **What the user saw:** flicker with DLSS 5 on (116 and 100 fps caps) and off. It goes away on alt-tab (the driver drops windowed G-Sync, `GSYNC: active=False`) and comes back as soon as G-Sync re-engages, 2–4 s after the game regains focus. So the flicker follows G-Sync being live.
+- **A plugin bug was in those tests.** Plugin 1.4.0 called `NvAPI_Disp_GetVRRInfo` on the framework thread once a second. That call takes **5–10 ms** (measured: p50 6.3 ms, max 10 ms). So every second, one frame came 5–10 ms late:
+
+  | | `PRESENT` swings >15% | p99 |
+  |---|---|---|
+  | 1.3.0, G-Sync off, DLSS 5 on, 116 cap | median 0% | median 9.05 ms |
+  | 1.4.0, any state | 2.6–8.5% | 9.2–15 ms |
+
+  With G-Sync live, each of those frames is a refresh-rate dip. 1.4.1 polls on a worker thread. A test showed a slow NVAPI call on one thread doesn't block NVAPI calls on another. The `PRESENT` line now also prints the plugin's own per-second cost on the game thread.
+- **Still to retest with 1.4.1:** G-Sync with DLSS 5 off, then on. Compare the flicker and the `PRESENT` swings against the 0% baseline.
+- **The display:** a **Samsung QN90D** (EDID `SAM7572`, 43"), a VA mini-LED TV. VRR flicker on this series is widely reported by owners and tied to **local dimming** ([Samsung community](https://eu.community.samsung.com/t5/tv/qn90d-50-inch-possible-qa-fault-problem/m-p/11711787/highlight/true), [QN90B thread](https://eu.community.samsung.com/t5/tv/qn90b-vrr-flicker-after-update-1403-6/td-p/6329585)). If 1.4.1 still flickers with flat presents, try Local Dimming Low or Off in Game Mode and the latest firmware. Otherwise, Fixed Refresh for the game is the known flicker-free setting.
 
 ## Findings (2026-11-04 test rounds)
 

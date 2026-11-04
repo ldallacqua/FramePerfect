@@ -18,9 +18,13 @@ internal sealed unsafe partial class FramePacing
     private nint gameHwnd;
     private DateTime nextProfileRead;
     private Task? profileTask;
+    private Task? vrrTask;
     private string lastGsyncLine = string.Empty;
 
     public NvDriver.VrrInfo? Vrr { get; private set; }
+
+    /// <summary>How long the last NvAPI_Disp_GetVRRInfo took (on a worker thread).</summary>
+    public double VrrPollMs { get; private set; }
 
     public bool GameFocused { get; private set; }
 
@@ -50,7 +54,26 @@ internal sealed unsafe partial class FramePacing
         if (this.windowDevice.Length == 0)
             return;
 
-        this.Vrr = NvDriver.GetVrr(this.windowDevice);
+        // NvAPI_Disp_GetVRRInfo takes 5-10 ms. On the framework thread that was a 5-10 ms hitch every second
+        // (1.4.0), which G-Sync turned into a refresh dip. Always poll it on a worker; the result lags by one poll.
+        if (this.vrrTask == null || this.vrrTask.IsCompleted)
+        {
+            var device = this.windowDevice;
+            this.vrrTask = Task.Run(() =>
+            {
+                try
+                {
+                    var sw = System.Diagnostics.Stopwatch.StartNew();
+                    this.Vrr = NvDriver.GetVrr(device);
+                    this.VrrPollMs = sw.Elapsed.TotalMilliseconds;
+                }
+                catch
+                {
+                    this.Vrr = null;
+                }
+            });
+        }
+
         var fg = GetForegroundWindow();
         this.GameFocused = this.gameHwnd != 0 && fg != 0 && (fg == this.gameHwnd || GetAncestor(fg, 2) == GetAncestor(this.gameHwnd, 2));
 
