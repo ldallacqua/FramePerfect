@@ -53,7 +53,7 @@ public sealed class Plugin : IDalamudPlugin
 
         Commands.AddHandler(CommandName, new CommandInfo(this.OnCommand)
         {
-            HelpMessage = "Opens the window. /dlssfix status | mode <dlaa|quality|balanced|performance|ultra|custom|game> | custom <33-100> | preset <default|j|k|l|m|f|game> | sharp <0-100> | lock <on|off> | reflex <off|on|boost> | cap <fps|off|gsync> | test [seconds|stop] | flash <on|off> | dll [update] | reset | on | off | apply",
+            HelpMessage = "Opens the window. /dlssfix status | mode <dlaa|quality|balanced|performance|ultra|custom|game> | custom <33-100> | preset <default|j|k|l|m|f|game> | sharp <0-100> | lock <on|off> | reflex <off|on|boost> | cap <fps|auto|off|gsync> | test [seconds|stop] | flash <on|off> | dll [update] | reset | on | off | apply",
         });
 
         PluginInterface.UiBuilder.Draw += this.windows.Draw;
@@ -105,7 +105,7 @@ public sealed class Plugin : IDalamudPlugin
                 Chat.Print(flash);
                 Chat.Print($"[DLSS Fix] monitor: {this.Pacing.WindowMonitor} {this.Pacing.WindowHz} Hz | game uses {this.Pacing.GameHzNow} Hz | " +
                            $"limiter: {FramePacing.LimitModeName(this.Pacing.LimitMode, this.Pacing.LimitFps)} | Reflex: {this.Config.Reflex} ({this.Pacing.ReflexState}), " +
-                           $"cap {(this.Config.FrameCapFps > 0 ? $"{this.Config.FrameCapFps:0.#} fps" : "off")} | {this.Pacing.PresentStats}");
+                           $"cap {this.Pacing.CapDescription} | {this.Pacing.PresentStats}");
                 foreach (var c in GameSettings.Evaluate(GameSettings.Read(), this.Config, this.Pacing))
                     if (c.Level != CheckLevel.Ok)
                         Chat.Print($"[DLSS Fix] {GameSettings.LevelTag(c.Level)} {c.Option} = {c.Current}: {c.Advice}");
@@ -161,23 +161,30 @@ public sealed class Plugin : IDalamudPlugin
                 if (parts[1] is "off" or "0")
                 {
                     this.Config.FrameCapFps = 0;
+                    this.Config.FrameCapAuto = false;
+                }
+                else if (parts[1] == "auto")
+                {
+                    this.Config.FrameCapAuto = true;
                 }
                 else if (parts[1] == "gsync" && this.Pacing.GsyncCap > 0)
                 {
                     this.Config.FrameCapFps = this.Pacing.GsyncCap;
+                    this.Config.FrameCapAuto = false;
                 }
                 else if (float.TryParse(parts[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var capFps))
                 {
                     this.Config.FrameCapFps = Math.Clamp(capFps, 20f, 1000f);
+                    this.Config.FrameCapAuto = false;
                 }
                 else
                 {
-                    Chat.PrintError("[DLSS Fix] use /dlssfix cap <fps>|off|gsync");
+                    Chat.PrintError("[DLSS Fix] use /dlssfix cap <fps>|auto|off|gsync (fps = what you see; with Smooth Motion the game renders half)");
                     return;
                 }
 
                 this.Config.Save();
-                Chat.Print($"[DLSS Fix] frame cap: {(this.Config.FrameCapFps > 0 ? $"{this.Config.FrameCapFps:0.#} fps" : "off")}");
+                Chat.Print($"[DLSS Fix] frame cap: {this.Pacing.CapDescription}");
                 return;
             case "dll":
                 if (parts.Length > 1 && parts[1] == "update")

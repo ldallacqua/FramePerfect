@@ -251,8 +251,8 @@ internal sealed unsafe partial class FramePacing : IDisposable
     private void EnsureReflex()
     {
         var mode = this.config.Reflex;
-        var cap = this.config.FrameCapFps;
-        var wanted = mode != ReflexMode.Off || cap > 0;
+        var (shown, rendered) = this.CapNow(); // the cap is what you see; with Smooth Motion the game renders half of it
+        var wanted = mode != ReflexMode.Off || rendered > 0;
         if (wanted && this.reflex == null && !this.reflexTried)
         {
             this.reflexTried = true;
@@ -278,7 +278,7 @@ internal sealed unsafe partial class FramePacing : IDisposable
         if (this.reflex == null)
             return;
 
-        var interval = cap > 0 ? (uint)Math.Round(1_000_000.0 / Math.Clamp(cap, 20f, 1000f)) : 0u;
+        var interval = rendered > 0 ? (uint)Math.Round(1_000_000.0 / Math.Clamp(rendered, 20f, 1000f)) : 0u;
         var want = (mode != ReflexMode.Off, mode == ReflexMode.Boost, interval);
         if (this.reflexApplied != want)
         {
@@ -286,7 +286,7 @@ internal sealed unsafe partial class FramePacing : IDisposable
             this.reflexApplied = want;
             this.reflexLive = wanted;
             this.log.Info($"Reflex: SetSleepMode(lowLatency={want.Item1}, boost={want.Item2}, minimumIntervalUs={want.Item3}" +
-                          $"{(interval > 0 ? $" = {1_000_000.0 / interval:0.#} fps cap" : string.Empty)}) -> {st}");
+                          $"{(interval > 0 ? $" = game renders at most {1_000_000.0 / interval:0.##} fps; cap {this.CapDescription}" : string.Empty)}) -> {st}");
             this.ReflexState = !wanted ? "off" : st == 0 ? "active" : $"SetSleepMode error {st}";
         }
     }
@@ -351,6 +351,7 @@ internal sealed unsafe partial class FramePacing : IDisposable
         }
 
         this.CheckGsync();
+        this.CheckSmoothMotion();
     }
 
     private static string ReadConfig(string name)
@@ -556,12 +557,19 @@ sb.Append($" {this.OutputColor}"); // from a fresh DXGI factory on the G-Sync wo
                     swings++;
             var p50 = Pct(iv, 0.50);
             Array.Sort(ip);
+            double sum = 0;
+            foreach (var x in iv)
+                sum += x;
+            var presentFps = sum > 0 ? iv.Length * 1000.0 / sum : 0;
+            var composed = this.TakeDwmComposedFps();
+            var screen = this.Fullscreen ? string.Empty
+                : $" | screen: DWM composed {composed:0.0} fps = {(presentFps > 0 ? composed / presentFps : 0):0.00}x the game's {presentFps:0.0} presents/s, refresh {this.DwmRefreshHz:0.###} Hz{(this.GameFocused ? string.Empty : " (game not focused: Windows skips composing a covered window)")}";
             this.PresentStats = $"{1000.0 / Math.Max(0.01, Pct(iv, 0.5)):0} fps, frame time p50 {p50:0.00} ms, p99 {Pct(iv, 0.99):0.00} ms, " +
                                 $"{100.0 * swings / (iv.Length - 1):0.0}% swings";
             this.log.Info($"  PRESENT: {iv.Length} presents | interval p05={Pct(iv, 0.05):0.00} p50={p50:0.00} p95={Pct(iv, 0.95):0.00} p99={Pct(iv, 0.99):0.00} ms " +
                           $"| swings >15% {100.0 * swings / (iv.Length - 1):0.0}% | in game present (limiter + Present) p50={ip[ip.Length / 2]:0.00} p95={ip[(int)(ip.Length * 0.95)]:0.00} ms " +
                           $"| sync interval {SyncInterval(this.LimitMode)} ({LimitModeName(this.LimitMode, this.LimitFps)}) | vblank {this.vblankHz:0.0} Hz | {this.swapLine} " +
-                          $"| plugin display check on game thread max {this.displayCheckMaxMs:0.00} ms, G-Sync poll {this.VrrPollMs:0.0} ms (worker)");
+                          $"| plugin display check on game thread max {this.displayCheckMaxMs:0.00} ms, G-Sync poll {this.VrrPollMs:0.0} ms (worker){screen}");
             this.displayCheckMaxMs = 0;
         }
 
@@ -604,7 +612,7 @@ sb.Append($" {this.OutputColor}"); // from a fresh DXGI factory on the G-Sync wo
                 lat.Append($"GetLatency={st} ({this.reports.Count} reports)");
             }
 
-            this.log.Info($"  REFLEX: {this.config.Reflex} cap={(this.config.FrameCapFps > 0 ? $"{this.config.FrameCapFps:0.#} fps" : "off")} | " +
+            this.log.Info($"  REFLEX: {this.config.Reflex} cap={this.CapDescription} | " +
                           $"status={s.Result} lowLatency={s.LowLatency} gsync(fsVrr)={s.FullscreenVrr} cplVsync={s.CplVsyncOn} iFlip={s.FullscreenIFlip} " +
                           $"gameSleep={s.UseGameSleep} sleepInterval={s.SleepIntervalUs}us frameGen={(s.FgMultiplier > 1 ? $"{s.FgMultiplier}x" : "off")} | sleep={r.LastSleepStatus} marker={r.LastMarkerStatus} | {lat}");
         }
@@ -658,7 +666,7 @@ sb.Append($" {this.OutputColor}"); // from a fresh DXGI factory on the G-Sync wo
                                           $"Now: {state}.");
         }
 
-        var capOn = this.config.FrameCapFps > 0 && this.ReflexAvailable;
+        var capOn = this.CapNow().Rendered > 0 && this.ReflexAvailable;
         if (capOn && this.LimitMode != 0)
             yield return new SettingCheck("Game frame rate limit", LimitModeName(this.LimitMode, this.LimitFps), CheckLevel.Recommend,
                                           "Set it to None (System Configuration > Display Settings) so only the Reflex cap paces frames. " +
@@ -672,6 +680,8 @@ sb.Append($" {this.OutputColor}"); // from a fresh DXGI factory on the G-Sync wo
                                           capOn ? "Correct: the Reflex cap paces frames." : "OK.");
 
         foreach (var c in this.GsyncChecks())
+            yield return c;
+        foreach (var c in this.SmoothMotionChecks())
             yield return c;
     }
 

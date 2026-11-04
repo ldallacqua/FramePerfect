@@ -32,6 +32,7 @@ internal sealed unsafe class TestRunner
     private double stepStart;
     private double lastFrame;
     private float savedCap;
+    private bool savedAuto;
     private int focusedTicks, gsyncTicks, ticks;
     private string nrSeen = string.Empty;
     private Thread? sampler;
@@ -48,6 +49,8 @@ internal sealed unsafe class TestRunner
         this.caps = stepCaps;
         this.stepSeconds = Math.Clamp(secondsPerStep, 6, 120);
         this.savedCap = this.plugin.Config.FrameCapFps;
+        this.savedAuto = this.plugin.Config.FrameCapAuto;
+        this.plugin.Config.FrameCapAuto = false; // the steps set the cap
         this.clock.Restart();
         this.plugin.Log.Info($"TEST: start | steps {string.Join(", ", this.caps.Select(c => c > 0 ? $"{c:0}" : "off"))} fps, {this.stepSeconds:0} s each | " +
                              $"camera turn {PanRadPerSecond * 180 / Math.PI:0}°/s | cap before: {(this.savedCap > 0 ? $"{this.savedCap:0.#}" : "off")}");
@@ -65,6 +68,7 @@ internal sealed unsafe class TestRunner
         this.sampler?.Join(500);
         this.sampler = null;
         this.plugin.Config.FrameCapFps = this.savedCap;
+        this.plugin.Config.FrameCapAuto = this.savedAuto;
         this.step = -1;
         this.plugin.Log.Info($"TEST: {why} | cap restored to {(this.savedCap > 0 ? $"{this.savedCap:0.#}" : "off")}");
         Plugin.Chat.Print($"[DLSS Fix] test {why}. Results are in the log (TEST lines); the cap is back to {(this.savedCap > 0 ? $"{this.savedCap:0.#}" : "off")}.");
@@ -224,11 +228,11 @@ internal sealed unsafe class TestRunner
     }
 
     [DllImport("dwmapi.dll")]
-    private static extern int DwmGetCompositionTimingInfo(nint hwnd, DwmTimingInfo* info);
+    internal static extern int DwmGetCompositionTimingInfo(nint hwnd, DwmTimingInfo* info);
 
     // dwmapi.h DWM_TIMING_INFO, pack(1). Only the first 64 bytes are read; Rest keeps the size right (292 bytes).
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    private struct DwmTimingInfo
+    internal struct DwmTimingInfo
     {
         public uint CbSize;
         public uint RateRefreshNum, RateRefreshDen;

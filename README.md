@@ -7,11 +7,14 @@ A Dalamud plugin that locks Final Fantasy XIV's DLSS to a fixed internal resolut
 - **DLSS DLL updater:** FFXIV ships DLSS 3.5.10. One click downloads NVIDIA's latest `nvngx_dlss.dll` from NVIDIA's official DLSS SDK repository. It is checked against GitHub's hash and NVIDIA's signature, and the old DLL is kept as a `.bak`.
 - **Sharpness slider:** AMD CAS runs on the DLSS output, before the UI. DLSS has ignored its own sharpness setting since 2.5.1.
 - **NVIDIA Reflex:** low-latency mode (On / On + Boost) and a precise driver frame cap, through NVAPI. FFXIV has no Reflex of its own.
+- **Smooth Motion aware cap:** detects NVIDIA Smooth Motion (driver frame generation) and caps the game at half the frame rate you see, so the generated frames fit the screen. "Auto" picks the right cap for G-Sync or Fixed Refresh.
 - **Correct refresh rate:** the game reads the refresh rate once at startup, from the primary monitor. The plugin gives it the rate of the monitor its window is actually on.
 - **Game settings check:** reads the game's own graphics options and tells you what to change, in the window and in chat.
 - **Debug tab:** loaded DLL versions, a per-frame flash/flicker detector and frame-pacing stats, for checking changes with numbers instead of by eye.
 
 Works alongside RenoDX's DLSS 5 (Neural Rendering) addon. See [DLSS 5 and G-Sync](#dlss-5-and-g-sync).
+
+> **Brightness flicker in borderless?** If the picture briefly gets brighter or darker, mostly while the camera moves (worse with DLSS 5), set NVIDIA Control Panel > Manage 3D settings > Program Settings > Final Fantasy XIV > **Monitor Technology: Fixed Refresh**. That removes it. Then use the plugin's **Auto cap**, or Smooth Motion. Why: [DLSS 5 and G-Sync](#dlss-5-and-g-sync).
 
 ## Install (dev plugin)
 
@@ -26,7 +29,7 @@ Works alongside RenoDX's DLSS 5 (Neural Rendering) addon. See [DLSS 5 and G-Sync
 
 **Settings tab:**
 - enable, DLSS mode, resolution lock, model preset, sharpness, chat notices
-- under "Latency & frame pacing": NVIDIA Reflex, frame cap (with a one-click G-Sync cap for your monitor), and "Use the refresh rate of the monitor the game is on"
+- under "Latency & frame pacing": NVIDIA Reflex, frame cap (the frame rate you see) with "Auto cap", and "Use the refresh rate of the monitor the game is on"
 - the game settings checklist and the current render resolution
 
 **Debug tab:**
@@ -49,7 +52,7 @@ Works alongside RenoDX's DLSS 5 (Neural Rendering) addon. See [DLSS 5 and G-Sync
 | `/dlssfix dll` | show the game folder's `nvngx_dlss.dll` version and check NVIDIA's latest release |
 | `/dlssfix dll update` | download, verify and install NVIDIA's latest `nvngx_dlss.dll` (takes effect on the next game start) |
 | `/dlssfix reflex off\|on\|boost` | NVIDIA Reflex low-latency mode |
-| `/dlssfix cap 80` / `cap gsync` / `cap off` | Reflex frame cap in fps (`gsync` = NVIDIA's G-Sync cap for the monitor the game is on) |
+| `/dlssfix cap 80` / `cap auto` / `cap gsync` / `cap off` | Reflex frame cap: the frame rate you see. `auto` = NVIDIA's G-Sync cap with G-Sync, the refresh rate with Fixed Refresh. `gsync` = NVIDIA's G-Sync cap for the monitor the game is on. With Smooth Motion the game is capped at half. |
 | `/dlssfix test [seconds]` / `test stop` | unattended G-Sync test: caps 60 / 100 / 116 twice (20 s each by default) while the camera turns at a constant 29°/s. It logs one `TEST step` line per step, then restores the cap. Keep the game focused and don't touch the mouse. |
 | `/dlssfix on\|off` | enable / disable the plugin |
 | `/dlssfix apply` | rebuild the render targets now |
@@ -95,6 +98,17 @@ The fix:
 
 ## DLSS 5 and G-Sync
 
+**In borderless, use Fixed Refresh for FFXIV.** NVIDIA Control Panel > Manage 3D settings > Program Settings > Final Fantasy XIV > Monitor Technology: **Fixed Refresh**. With G-Sync on, borderless flickers in brightness. Exclusive fullscreen mostly avoids it, but most players want borderless. The measurements are below:
+
+- FFXIV uses an old swap chain type (blit model, `BLT_DISCARD`). Windows never upgrades it to flip model, even with "Optimizations for windowed games" on (PresentMon: `Composed: Copy with GPU GDI` for every frame).
+- So in borderless, the Windows compositor copies every frame and shows about 1 in 10 of them a little early or late, even when the game's frames are perfectly even.
+- With G-Sync, each of those is a short change of refresh rate, and many screens (VA and mini-LED especially) show that as a change in brightness. Other games use flip model or exclusive fullscreen, so they don't show this.
+- The plugin makes it more visible than the game alone: its frame cap keeps the game under the refresh rate, where G-Sync varies. Uncapped, the game runs above 120 fps and G-Sync stays at the maximum refresh.
+
+With Fixed Refresh, use the plugin's **Auto cap** (exactly the refresh rate, e.g. 120). Or turn on Smooth Motion, so the game renders 60 and you see 120 (see [Smooth Motion](#smooth-motion)). If you go back to G-SYNC later, press **Restore** on the game in Program Settings too. Otherwise hidden profile fields keep G-Sync off (see [G-Sync check](#g-sync-check-2026-11-04-control-panel-said-g-sync-the-driver-kept-it-off)). The window's G-Sync line shows this advice while G-Sync is active in borderless.
+
+### History of the diagnosis
+
 If you use RenoDX's DLSS 5 addon (`renodx-dlss5.addon64` + `nvngx_dlssnr.dll`) with G-Sync, the image can flicker **only while the camera moves**. That flicker is G-Sync (VRR), not the rendering:
 
 - Without DLSS 5 the game sits at its frame cap, so G-Sync has nothing to vary. DLSS 5 costs ~7 ms of GPU time per frame on an RTX 4090 at 4K, which pulls the game below the cap (~87 fps). The refresh rate then follows the frame times, and the panel's brightness changes with the refresh rate. This is the same VRR flicker you sometimes see on Windows desktop windows.
@@ -104,9 +118,24 @@ If you use RenoDX's DLSS 5 addon (`renodx-dlss5.addon64` + `nvngx_dlssnr.dll`) w
 
 **Fix:** NVIDIA Control Panel > Manage 3D settings > Program Settings > `ffxiv_dx11.exe` > Monitor Technology: **Fixed Refresh**. That gave zero flicker at 75–92 fps. Other games keep G-Sync.
 
-Trade-off: possible tearing with V-Sync off, or slight judder with V-Sync on below the refresh rate. For perfectly even frames, use V-Sync on + a 60 fps cap.
+Trade-off: with a fixed refresh rate, a frame rate that isn't the refresh rate (or exactly half of it) shows some frames twice: 116 fps on 120 Hz repeats 4 frames every second. That's why Auto uses the refresh rate itself with Fixed Refresh, and the checklist flags other caps.
 
 FFXIV's own frame limiter is no help here. It works in vblank-sized ticks: at a cap of 60, a frame that misses 16.7 ms waits until 33.3 ms. Frame times then alternate 16.7/33.3 ms (~51 fps while moving) and G-Sync alternates 60/30 Hz. A driver cap (NVIDIA Max Frame Rate, RTSS) spaces frames without skipping ticks.
+
+## Smooth Motion
+
+NVIDIA Smooth Motion is frame generation in the driver: it inserts one generated frame between every two the game renders. It's on in the NVIDIA app > Graphics > Program settings > Final Fantasy XIV > Smooth Motion. It needs a restart of the game, and RTX 40 needs driver 590.26 or newer.
+
+The plugin's cap is **the frame rate you see**. With Smooth Motion the driver doubles what the game renders, so the plugin caps rendering at half. At Fixed Refresh 120 Hz with Auto, the game renders 60 and you see 120. With G-Sync 120 Hz it renders 58 and you see 116. If Smooth Motion is on and the cap is off, the plugin uses Auto anyway. Without a cap, Smooth Motion would make 2x whatever the game renders, e.g. 200+ frames for a 120 Hz screen, and the extra ones are dropped unevenly.
+
+How the plugin knows Smooth Motion is running:
+
+- `NvPresent64.dll`, the driver's Smooth Motion runtime, is loaded in the game. The cap follows this.
+- The game's driver profile has `Smooth Motion - Enable` (`0xB0D384C0`) = on, and `Smooth Motion - Enabled APIs` (`0xB0CC0875`) allows DX11 (bit 1; not set = all APIs). The IDs come from NVIDIA Profile Inspector's `CustomSettingNames.xml`. If the profile says on but the DLL isn't loaded, the checklist says to restart the game.
+- Reflex's sleep status reports the frame-generation multiplier the driver used (`frameGen=` in the `REFLEX` line).
+- In borderless, the compositor composes about 2x as many frames as the game presents (`screen:` in the `PRESENT` line). This only works while the game window is focused: Windows skips composing a covered window.
+
+Not verified in game yet: that Smooth Motion runs with ReShade + RenoDX DLSS 5 on FFXIV's blit-model swap chain, and that the Reflex frame interval caps the rendered frames, not the shown ones.
 
 RenoDX settings that mattered (`ReShade.ini`, `[RenoDX.DLSS5]`):
 
@@ -160,7 +189,7 @@ FFXIV has no V-Sync option because **its frame-rate limit is V-Sync**. `Kernel::
   - `NvAPI_D3D_SetSleepMode` when the settings change
   - `NvAPI_D3D_Sleep` plus a `SIMULATION_START` marker at the start of every framework tick, before the game samples input
   - `PRESENT_START` / `PRESENT_END` markers around the game's Present
-- **Frame cap** (`minimumIntervalUs`): an evenly spaced driver cap. The "G-Sync" button sets NVIDIA's own formula, `3600·Hz / (Hz + 3600)` (116 fps at 120 Hz). With a cap, set the game's frame rate limit to None, or the game's V-Sync steps still apply; the checklist recommends it.
+- **Frame cap** (`minimumIntervalUs`): an evenly spaced driver cap. It is the frame rate you see (halved for rendering with Smooth Motion). "Auto cap" uses NVIDIA's G-Sync formula `3600·Hz / (Hz + 3600)` (116 fps at 120 Hz) with G-Sync, and exactly the refresh rate with Fixed Refresh. With a cap, set the game's frame rate limit to None, or the game's V-Sync steps still apply; the checklist recommends it.
 - **Diagnostics:**
   - which monitor the game is on and every monitor's refresh rate
   - the game's limiter mode
@@ -315,6 +344,8 @@ FFXIV's own menu didn't list 3840x2160 for full screen, though DXGI and GDI both
     - `SWAPCHAIN:` swap effect, buffers, flags, output and presentation mode. Written when something changes.
     - `PRESENT:` present-to-present p05/p50/p95/p99, swings, time inside the game's limiter + Present, sync interval and measured vblank rate. Every 5 s.
     - `REFLEX:` mode, cap, driver sleep status (`gsync(fsVrr)` = exclusive fullscreen G-Sync only, `cplVsync`, `iFlip`, `gameSleep`, `frameGen`) and latency. Every 5 s while Reflex or the cap is on.
+    - `SMOOTHMOTION:` whether `NvPresent64.dll` is loaded, the Smooth Motion fields of the driver profile, the driver's frame-gen multiplier, whether G-Sync is in use for the game and why, and the cap (shown / rendered). Written when something changes.
+    - `PRESENT ... | screen:` frames DWM composed per second, as a multiple of the game's presents, and the exact refresh rate. 2x = Smooth Motion frames reach the screen. Borderless only, game focused.
     - `GSYNC:` live VRR state of the game's monitor (`active`, `requested`, `possible`, `displayInVrrMode`, `indicator`), whether the game window has focus, and the G-Sync fields of the game's driver profile. Written when something changes.
     - `TEST step N/M cap=X`, during `/dlssfix test`: focus %, G-Sync active %, DLSS 5 state, then three interval distributions with p05–p99, swings and a histogram:
       - `game frames`: framework ticks
@@ -330,7 +361,7 @@ FFXIV's own menu didn't list 3840x2160 for full screen, though DXGI and GDI both
 Wanted most with DLSS 5, since DLSS 5 takes the game down to ~75–90 fps at 4K.
 
 - **NVIDIA DLSS Frame Generation can't be added in-process.** Streamline's DLSS-G needs DirectX 12, and FFXIV is DX11. Same for AMD's FSR 3 frame generation: the FidelityFX SDK ships DX12/Vulkan backends only.
-- **Available now: NVIDIA Smooth Motion.** It is driver-level frame generation for DX11/DX12 games and has officially supported RTX 40 since August 2025. Turn it on in the NVIDIA App > Graphics > Program Settings > FFXIV > Smooth Motion. To measure: frame pacing with Fixed Refresh + V-Sync (e.g. a 60 fps base → 120 Hz), UI ghosting (Smooth Motion interpolates the final image, UI included), and whether it works with ReShade/RenoDX hooking DXGI.
+- **Available now: NVIDIA Smooth Motion.** It is driver-level frame generation for DX11/DX12 games, on RTX 40 since driver 590.26. The plugin detects it and halves the cap (see [Smooth Motion](#smooth-motion)). Still to measure: frame pacing with Fixed Refresh (60 rendered → 120 shown), UI ghosting (Smooth Motion interpolates the final image, UI included), and whether it works with ReShade/RenoDX hooking DXGI.
 - **In-plugin option (big project):** the plugin already has everything frame generation needs from the DLSS evaluate call: color before the UI, depth, motion vectors, jitter and the render sub-rectangle. A real implementation would have to:
   - share those textures with a D3D12 device
   - run FSR 3.1 / XeFG frame interpolation there

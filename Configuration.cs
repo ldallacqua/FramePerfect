@@ -80,8 +80,12 @@ public sealed class Configuration : IPluginConfiguration
 
     public ReflexMode Reflex { get; set; } = ReflexMode.Off;
 
-    /// <summary>Driver frame cap through Reflex (NvAPI minimum frame interval), in fps. 0 = off.</summary>
+    /// <summary>Driver frame cap through Reflex (NvAPI minimum frame interval): the frame rate you see, in fps. 0 = off.
+    /// With Smooth Motion the game is capped at half of it (the driver generates the other half).</summary>
     public float FrameCapFps { get; set; } = 0f;
+
+    /// <summary>The plugin picks the cap: the G-Sync cap with G-Sync, the refresh rate with Fixed Refresh (halved for rendering with Smooth Motion).</summary>
+    public bool FrameCapAuto { get; set; } = false;
 
     /// <summary>Give the game the refresh rate of the monitor its window is on (it reads the primary monitor once at startup).</summary>
     public bool FixRefreshRate { get; set; } = true;

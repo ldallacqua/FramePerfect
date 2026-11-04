@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -30,6 +31,11 @@ internal static unsafe class NvDriver
     public const uint VrrMode = 0x1194F158;          // "Enable G-SYNC globally" [G-SYNC - Application Mode]: 0 off, 1 full screen, 2 full screen and windowed
     public const uint VrrRequestState = 0x1094F1F7;  // "VRR requested state" [G-SYNC - Application Requested State]: same values
 
+    // Smooth Motion (driver frame generation, driver 571.86+; RTX 40 since 590.26). Not in NvApiDriverSettings.h:
+    // IDs from NVIDIA Profile Inspector's CustomSettingNames.xml. The NVIDIA app's per-program toggle writes these.
+    public const uint SmoothMotionEnable = 0xB0D384C0; // [Smooth Motion - Enable]: 0 off, 1 on
+    public const uint SmoothMotionApis = 0xB0CC0875;   // [Smooth Motion - Enabled APIs]: bit 0 DX12, bit 1 DX11, bit 2 Vulkan; not set = all
+
     private const int SettingSize = 12320;           // NVDRS_SETTING_V1 as the driver accepts it
     private const int SettingIdOffset = 4100;
     private const int SettingLocationOffset = 4108;  // 0 this profile, 1 global, 2 base, 3 default
@@ -55,7 +61,16 @@ internal static unsafe class NvDriver
     /// <summary>NVAPI_SETTING_NOT_FOUND, for settings that weren't read.</summary>
     public static readonly Setting NotSet = new(-160, 0, -1, false);
 
-    public sealed record Profile(int Status, string Name, Setting AppOverride, Setting AppMode, Setting AppRequested, Setting GlobalMode, Setting GlobalRequested);
+    public sealed record Profile(int Status, string Name, Setting AppOverride, Setting AppMode, Setting AppRequested, Setting GlobalMode, Setting GlobalRequested)
+    {
+        /// <summary>Smooth Motion as it applies to the game (the game profile's value, else the global one).</summary>
+        public Setting SmoothMotion { get; init; } = NotSet;
+
+        public Setting SmoothMotionApis { get; init; } = NotSet;
+
+        /// <summary>Smooth Motion is switched on for this game and allowed for DX11.</summary>
+        public bool SmoothMotionOn => this.SmoothMotion is { Found: true, Value: 1 } && (!this.SmoothMotionApis.Found || (this.SmoothMotionApis.Value & 2) != 0);
+    }
 
     private static bool Ready()
     {
@@ -156,12 +171,18 @@ internal static unsafe class NvDriver
             }
 
             nint global;
-            Setting globalMode = NotSet, globalRequested = NotSet;
+            Setting globalMode = NotSet, globalRequested = NotSet, globalSm = NotSet, globalSmApis = NotSet;
             if (getGlobal(session, &global) == 0)
             {
                 globalMode = Get(global, VrrMode);
                 globalRequested = Get(global, VrrRequestState);
+                globalSm = Get(global, SmoothMotionEnable);
+                globalSmApis = Get(global, SmoothMotionApis);
             }
+
+            // The driver already answers with the global value (location 1) when the game profile doesn't have the
+            // setting; this covers drivers that don't, and reports the global value as "global".
+            Setting OrGlobal(Setting app, Setting g) => app.Found || !g.Found ? app : g with { Location = 1 };
 
             var app = buf + SettingSize;
             *(uint*)app = ApplicationSize | (4u << 16);
@@ -169,12 +190,16 @@ internal static unsafe class NvDriver
             fixed (char* n = exeName + "\0")
                 st = findApp(session, n, &appProfile, app);
             if (st != 0)
-                return new Profile(st, "(no profile for this exe: global settings apply)", NotSet, NotSet, NotSet, globalMode, globalRequested);
+                return new Profile(st, "(no profile for this exe: global settings apply)", NotSet, NotSet, NotSet, globalMode, globalRequested) { SmoothMotion = globalSm, SmoothMotionApis = globalSmApis };
 
             var prof = app + ApplicationSize;
             *(uint*)prof = ProfileSize | (1u << 16);
             var name = getProfileInfo(session, appProfile, prof) == 0 ? new string((char*)(prof + 4)) : "?";
-            return new Profile(0, name, Get(appProfile, VrrAppOverride), Get(appProfile, VrrMode), Get(appProfile, VrrRequestState), globalMode, globalRequested);
+            return new Profile(0, name, Get(appProfile, VrrAppOverride), Get(appProfile, VrrMode), Get(appProfile, VrrRequestState), globalMode, globalRequested)
+            {
+                SmoothMotion = OrGlobal(Get(appProfile, SmoothMotionEnable), globalSm),
+                SmoothMotionApis = OrGlobal(Get(appProfile, SmoothMotionApis), globalSmApis),
+            };
         }
         finally
         {
@@ -192,6 +217,15 @@ internal static unsafe class NvDriver
         4 => "Fixed Refresh",
         _ => $"0x{v:X}",
     };
+
+    public static string OnOffName(uint v) => v switch
+    {
+        0 => "off",
+        1 => "on",
+        _ => $"0x{v:X}",
+    };
+
+    public static string ApiMaskName(uint v) => v == 0 ? "no APIs" : string.Join("+", new[] { (1u, "DX12"), (2u, "DX11"), (4u, "Vulkan") }.Where(a => (v & a.Item1) != 0).Select(a => a.Item2));
 
     public static string ModeName(uint v) => v switch
     {

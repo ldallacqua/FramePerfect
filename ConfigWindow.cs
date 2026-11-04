@@ -269,26 +269,34 @@ internal sealed class ConfigWindow : Window
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Lowers input latency: the driver keeps the GPU queue short and the plugin calls\nNVIDIA's sleep at the start of every frame. Boost also keeps GPU clocks up.");
 
-        var cap = cfg.FrameCapFps;
+        var auto = cfg.FrameCapAuto;
+        if (ImGui.Checkbox("Auto cap", ref auto))
+        {
+            cfg.FrameCapAuto = auto;
+            cfg.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("The plugin picks the cap: with G-Sync, NVIDIA's cap a few fps under the refresh rate;\nwith Fixed Refresh, exactly the refresh rate. With Smooth Motion the game renders half of it.");
+
+        ImGui.SameLine();
+        if (cfg.FrameCapAuto)
+            ImGui.BeginDisabled();
+        var cap = cfg.FrameCapAuto ? p.CapNow().Shown : cfg.FrameCapFps;
         if (ImGui.SliderFloat("Frame cap (Reflex)", ref cap, 0f, 240f, cap < 20f ? "off" : "%.0f fps"))
             cfg.FrameCapFps = cap < 20f ? 0f : MathF.Round(cap);
         if (ImGui.IsItemDeactivatedAfterEdit())
             cfg.Save();
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("A precise driver frame cap. The game's own limiter is V-Sync in whole refresh steps\n(16.7 / 33.3 ms), so set the game's frame rate limit to None when you use this.\nWith G-Sync: a few fps below the refresh rate, or a rate DLSS 5 can always hold.");
+        if (cfg.FrameCapAuto)
+            ImGui.EndDisabled();
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip("A precise driver frame cap: the frame rate you see. The game's own limiter is V-Sync in whole refresh steps\n" +
+                             "(16.7 / 33.3 ms), so set the game's frame rate limit to None when you use this.\n" +
+                             "With G-Sync: a few fps below the refresh rate. With Fixed Refresh: the refresh rate, or exactly half.\n" +
+                             "With Smooth Motion the plugin caps the game at half, because the driver doubles the frames.");
 
-        if (p.GsyncCap > 0)
-        {
-            ImGui.SameLine();
-            if (ImGui.SmallButton($"G-Sync ({p.GsyncCap})"))
-            {
-                cfg.FrameCapFps = p.GsyncCap;
-                cfg.Save();
-            }
-
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip($"NVIDIA's G-Sync cap for a {p.WindowHz} Hz monitor: keeps frames inside the G-Sync range.");
-        }
+        if (p.CapNow().Shown > 0 || p.FrameMultiplier > 1)
+            ImGui.TextDisabled($"Cap: {p.CapDescription}");
 
         var fix = cfg.FixRefreshRate;
         if (ImGui.Checkbox("Use the refresh rate of the monitor the game is on", ref fix))
@@ -302,7 +310,7 @@ internal sealed class ConfigWindow : Window
 
         if (p.WindowHz > 0)
         {
-            var reflex = cfg.Reflex == ReflexMode.Off && cfg.FrameCapFps <= 0 ? "Reflex off" : $"Reflex {p.ReflexState}";
+            var reflex = cfg.Reflex == ReflexMode.Off && p.CapNow().Rendered <= 0 ? "Reflex off" : $"Reflex {p.ReflexState}";
             ImGui.TextDisabled($"Monitor: {p.WindowHz} Hz ({p.WindowMonitor}) | game uses {p.GameHzNow} Hz | {reflex}" +
                                (p.PresentStats.Length > 0 ? $" | {p.PresentStats}" : string.Empty));
         }
@@ -376,6 +384,9 @@ internal sealed class ConfigWindow : Window
                                          $"iFlip {ss.Value.FullscreenIFlip}, game sleep {ss.Value.UseGameSleep}" : string.Empty) +
                           (p.ReflexLatency.Length > 0 ? $" | latency {p.ReflexLatency}" : string.Empty));
         ImGui.TextWrapped($"G-Sync: {(p.GsyncSummary.Length > 0 ? p.GsyncSummary : "?")}");
+        ImGui.TextWrapped($"Smooth Motion: {(p.SmoothMotionLoaded ? "running (NvPresent64.dll loaded)" : "not running")}, driver frame-gen multiplier " +
+                          $"{(p.DriverFgMultiplier > 1 ? $"{p.DriverFgMultiplier}x" : "none")} | G-Sync for the game: {(p.VrrForGame is { } v ? v ? "yes" : "no" : "?")} | " +
+                          $"screen: DWM composed {p.DwmComposedFps:0.0} fps at {p.DwmRefreshHz:0.###} Hz | cap {p.CapDescription}");
 
         ImGui.Separator();
         ImGui.TextWrapped($"Log: {this.plugin.Log.FilePath}");

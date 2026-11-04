@@ -77,6 +77,15 @@ internal sealed unsafe partial class FramePacing
 
                 try
                 {
+                    this.SampleDwmRate();
+                }
+                catch
+                {
+                    // diagnostics only
+                }
+
+                try
+                {
                     var (ok, hdr, desc) = ReadOutputColor(device);
                     if (ok)
                     {
@@ -129,11 +138,20 @@ internal sealed unsafe partial class FramePacing
         if (p is { Status: 0 })
         {
             var ov = p.AppOverride;
+            if (ov.Found && ov.Value == 4)
+            {
+                yield return new SettingCheck("G-Sync", "off for this game (Fixed Refresh)", CheckLevel.Ok,
+                                              "Fixed Refresh: the setting to use in borderless. It removes the brightness flicker G-Sync causes there. " +
+                                              $"Use the frame cap Auto (the refresh rate, {this.RefreshHz:0.##} fps), or turn on Smooth Motion and the plugin halves it. " +
+                                              $"If you go back to G-SYNC later, also press Restore on {p.Name} in Program Settings, or G-Sync stays off (hidden profile fields).");
+                yield break;
+            }
+
             if (ov.Found && ov.Value != 0)
             {
                 yield return new SettingCheck("G-Sync", $"off for this game ({NvDriver.OverrideName(ov.Value)})", CheckLevel.Info,
                                               $"NVIDIA Control Panel > Manage 3D settings > Program Settings > {p.Name}: Monitor Technology is {NvDriver.OverrideName(ov.Value)}. " +
-                                              "That's the DLSS 5 flicker workaround. Set it to G-SYNC Compatible to use G-Sync.");
+                                              "In borderless, Fixed Refresh is the recommended setting.");
                 yield break;
             }
 
@@ -164,14 +182,25 @@ internal sealed unsafe partial class FramePacing
             }
         }
 
-        if (active)
-            yield return new SettingCheck("G-Sync", "active", CheckLevel.Ok, $"The driver reports variable refresh live on {this.windowDevice}.");
+        if (active && this.Fullscreen)
+            yield return new SettingCheck("G-Sync", "active", CheckLevel.Ok, $"The driver reports variable refresh live on {this.windowDevice} (exclusive full screen).");
+        else if (active)
+            yield return new SettingCheck("G-Sync", "active in borderless", CheckLevel.Info, FlickerAdvice(p?.Name ?? "Final Fantasy XIV: A Realm Reborn"));
         else if (liveOk)
             yield return new SettingCheck("G-Sync", now, CheckLevel.Info,
                                           this.GameFocused
                                               ? "G-Sync is allowed for this game, but the driver doesn't report variable refresh on the game's monitor right now."
                                               : "Click into the game: windowed G-Sync only runs while the game window has focus.");
     }
+
+    /// <summary>What to do about G-Sync brightness flicker in borderless (measured 2026-11-04, see README).</summary>
+    public static string FlickerAdvice(string profileName) =>
+        "If the picture flickers in brightness (briefly brighter or darker, mostly while the camera moves, worse with DLSS 5 or " +
+        $"when the frame rate changes), set NVIDIA Control Panel > Manage 3D settings > Program Settings > {profileName} > " +
+        "Monitor Technology to Fixed Refresh. That removes it. Why: in borderless Windows copies every FFXIV frame through its " +
+        "compositor (the game's old swap chain type is never upgraded), which shows about 1 frame in 10 a little early or late. " +
+        "With G-Sync each of those is a short change of refresh rate, and many screens (VA and mini-LED especially) show that as a " +
+        "change in brightness. Then use the frame cap Auto, or Smooth Motion.";
 
     /// <summary>
     /// The display's current color mode (HDR10 or SDR). This needs a new DXGI factory every time: outputs from an
