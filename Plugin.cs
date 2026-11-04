@@ -33,6 +33,8 @@ public sealed class Plugin : IDalamudPlugin
 
     internal FramePacing Pacing { get; }
 
+    internal DllUpdater Updater { get; }
+
     public Plugin()
     {
         this.Config = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
@@ -40,6 +42,7 @@ public sealed class Plugin : IDalamudPlugin
         this.Controller = new DlssController(this.Config, this.Log);
         this.Pacing = new FramePacing(this.Config, this.Log);
         this.Controller.Pacing = this.Pacing;
+        this.Updater = new DllUpdater(System.IO.Path.GetDirectoryName(System.Diagnostics.Process.GetCurrentProcess().MainModule!.FileName)!, this.Log);
         this.notifier = new GameSettingsNotifier(this);
 
         this.configWindow = new ConfigWindow(this);
@@ -47,7 +50,7 @@ public sealed class Plugin : IDalamudPlugin
 
         Commands.AddHandler(CommandName, new CommandInfo(this.OnCommand)
         {
-            HelpMessage = "Opens the window. /dlssfix status | mode <dlaa|quality|balanced|performance|ultra|custom|game> | custom <33-100> | preset <default|j|k|l|m|f|game> | sharp <0-100> | lock <on|off> | reflex <off|on|boost> | cap <fps|off|gsync> | flash <on|off> | reset | on | off | apply",
+            HelpMessage = "Opens the window. /dlssfix status | mode <dlaa|quality|balanced|performance|ultra|custom|game> | custom <33-100> | preset <default|j|k|l|m|f|game> | sharp <0-100> | lock <on|off> | reflex <off|on|boost> | cap <fps|off|gsync> | flash <on|off> | dll [update] | reset | on | off | apply",
         });
 
         PluginInterface.UiBuilder.Draw += this.windows.Draw;
@@ -160,6 +163,24 @@ public sealed class Plugin : IDalamudPlugin
                 this.Config.Save();
                 Chat.Print($"[DLSS Fix] frame cap: {(this.Config.FrameCapFps > 0 ? $"{this.Config.FrameCapFps:0.#} fps" : "off")}");
                 return;
+            case "dll":
+                if (parts.Length > 1 && parts[1] == "update")
+                {
+                    this.Updater.InstallAsync();
+                    Chat.Print("[DLSS Fix] checking and installing NVIDIA's latest nvngx_dlss.dll; progress in the DLSS Fix window (/dlssfix dll shows the result)");
+                }
+                else if (this.Updater.LatestVersion.Length == 0 && !this.Updater.Busy)
+                {
+                    this.Updater.CheckAsync();
+                    Chat.Print($"[DLSS Fix] game folder has nvngx_dlss.dll {this.Updater.InstalledVersion()}; asking NVIDIA's GitHub for the latest (run /dlssfix dll again for the result)");
+                }
+                else
+                {
+                    Chat.Print($"[DLSS Fix] {(this.Updater.State.Length > 0 ? this.Updater.State : "working...")}" +
+                               (this.Updater.UpdateAvailable ? " Use /dlssfix dll update to install it." : string.Empty));
+                }
+
+                return;
             case "on":
                 this.Config.Enabled = true;
                 changed = true;
@@ -232,7 +253,7 @@ public sealed class Plugin : IDalamudPlugin
                 changed = true;
                 break;
             default:
-                Chat.PrintError("[DLSS Fix] unknown command. Use /dlssfix status | mode | custom | preset | sharp | lock | reflex | cap | flash | reset | on | off | apply");
+                Chat.PrintError("[DLSS Fix] unknown command. Use /dlssfix status | mode | custom | preset | sharp | lock | reflex | cap | flash | dll | reset | on | off | apply");
                 return;
         }
 

@@ -4,6 +4,7 @@ A Dalamud plugin that locks Final Fantasy XIV's DLSS to a fixed internal resolut
 
 - **Fixed DLSS resolution:** DLAA, Quality, Balanced, Performance, Ultra Performance, or a custom percentage.
 - **Model preset:** the game hard-codes the old CNN preset C. The plugin defaults to the preset NVIDIA recommends for the loaded `nvngx_dlss.dll`, or you can pick J, K, L, M or F.
+- **DLSS DLL updater:** FFXIV ships DLSS 3.5.10. One click downloads NVIDIA's latest `nvngx_dlss.dll` from NVIDIA's official DLSS SDK repository. It is checked against GitHub's hash and NVIDIA's signature, and the old DLL is kept as a `.bak`.
 - **Sharpness slider:** AMD CAS runs on the DLSS output, before the UI. DLSS has ignored its own sharpness setting since 2.5.1.
 - **NVIDIA Reflex:** low-latency mode (On / On + Boost) and a precise driver frame cap, through NVAPI. FFXIV has no Reflex of its own.
 - **Correct refresh rate:** the game reads the refresh rate once at startup, from the primary monitor. The plugin gives it the rate of the monitor its window is actually on.
@@ -45,6 +46,8 @@ Works alongside RenoDX's DLSS 5 (Neural Rendering) addon. See [DLSS 5 and G-Sync
 | `/dlssfix preset default\|k\|j\|m\|l\|f\|game` | DLSS model preset |
 | `/dlssfix sharp 35` | CAS sharpness in % (0 = off) |
 | `/dlssfix lock on\|off` | resolution lock |
+| `/dlssfix dll` | show the game folder's `nvngx_dlss.dll` version and check NVIDIA's latest release |
+| `/dlssfix dll update` | download, verify and install NVIDIA's latest `nvngx_dlss.dll` (takes effect on the next game start) |
 | `/dlssfix reflex off\|on\|boost` | NVIDIA Reflex low-latency mode |
 | `/dlssfix cap 80` / `cap gsync` / `cap off` | Reflex frame cap in fps (`gsync` = NVIDIA's G-Sync cap for the monitor the game is on) |
 | `/dlssfix on\|off` | enable / disable the plugin |
@@ -109,6 +112,26 @@ RenoDX settings that mattered (`ReShade.ini`, `[RenoDX.DLSS5]`):
 - `NRSourceEncoding=1`: FFXIV hands DLSS SDR color that is already tonemapped, in a float buffer. As linear HDR, the per-frame brightness normalizer pumped.
 - `NRLinearUnitNits` only applies to linear sources. `NRFeedMode=2` falls back to v1, because FFXIV passes no exposure texture.
 - Keep `NRNormTrace=0` and `NREditTrace=0` unless you're debugging; the edit trace writes a CSV every frame.
+
+## Updating nvngx_dlss.dll
+
+FFXIV ships DLSS 3.5.10 and doesn't update it. NVIDIA publishes the DLSS runtime in its DLSS SDK repository, [github.com/NVIDIA/DLSS](https://github.com/NVIDIA/DLSS), at `lib/Windows_x86_64/rel/nvngx_dlss.dll` for each release tag.
+
+**How it works:**
+- **Check** ("Check for update" in the Settings tab, or `/dlssfix dll`): reads the latest release tag and that file's size and git blob SHA-1 from the GitHub API. Nothing is downloaded, and the plugin never contacts GitHub unless you ask.
+- **Install** ("Download and install", or `/dlssfix dll update`):
+  1. downloads the file from `raw.githubusercontent.com/NVIDIA/DLSS/<tag>/...`
+  2. verifies the size and the git blob hash against the API, a valid Authenticode signature (`WinVerifyTrust`) from **NVIDIA Corporation**, and that the file version matches the tag; it installs nothing if any check fails
+  3. renames the current DLL to `nvngx_dlss.dll.<version>.bak` (Windows allows renaming a loaded DLL, but not overwriting it)
+  4. moves the new one into place
+  
+  The game loads it on the next start.
+- **Revert:** delete `nvngx_dlss.dll` and rename the `.bak` back. Game patches or a file repair may also restore 3.5.10; check again afterwards.
+- **NVIDIA App DLSS override:** if it is on for the game, the driver supplies its own DLL and the game-folder copy isn't used. The window says so.
+
+Tested end to end on 2026-11-04 (in a scratch folder with a copy of the game's 3.5.10):
+- 3.5.10 → 310.9.16: 56 MB, hash and signature OK, an unsigned file rejected
+- renaming a DLL while it's mapped as an image works; overwriting it is blocked
 
 ## Frame pacing, refresh rate and Reflex
 

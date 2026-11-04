@@ -156,6 +156,7 @@ internal sealed class ConfigWindow : Window
             ctl.OnSettingsChanged();
         }
 
+        this.DrawDll();
         this.DrawPacing();
 
         ImGui.Separator();
@@ -198,6 +199,49 @@ internal sealed class ConfigWindow : Window
         (ReflexMode.On, "On"),
         (ReflexMode.Boost, "On + Boost"),
     };
+
+    private void DrawDll()
+    {
+        var u = this.plugin.Updater;
+        var rt = this.plugin.Controller.Runtime;
+
+        ImGui.Separator();
+        var installed = u.InstalledVersion();
+        ImGui.TextUnformatted($"DLSS DLL in the game folder: {(installed.Length > 0 ? installed : "none")}");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip($"Loaded right now: {rt.Upscaler}");
+        ImGui.SameLine();
+        if (u.Busy)
+        {
+            ImGui.TextDisabled("working...");
+        }
+        else
+        {
+            if (ImGui.SmallButton("Check for update"))
+                u.CheckAsync();
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Asks github.com/NVIDIA/DLSS (NVIDIA's DLSS SDK) for its latest release.\nNothing is downloaded until you click install.");
+            if (u.UpdateAvailable)
+            {
+                ImGui.SameLine();
+                if (ImGui.SmallButton($"Download and install {u.LatestVersion} ({u.LatestSize / 1048576.0:0} MB)"))
+                    u.InstallAsync();
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Downloads nvngx_dlss.dll from NVIDIA's DLSS repository, checks its hash against GitHub\n" +
+                                     "and that it is signed by NVIDIA, keeps the current DLL as nvngx_dlss.dll.<version>.bak,\n" +
+                                     "and puts the new one in the game folder. The game loads it on the next start.");
+            }
+        }
+
+        if (u.State.Length > 0)
+        {
+            var color = u.State.StartsWith("Failed") ? Red : u.RestartNeeded ? Amber : u.UpdateAvailable ? Amber : Blue;
+            ImGui.TextColored(color, u.State);
+        }
+
+        if (rt.Upscaler.Contains("override", StringComparison.OrdinalIgnoreCase))
+            ImGui.TextColored(Blue, "The NVIDIA App's DLSS override is supplying the DLL, so the game-folder copy isn't used.");
+    }
 
     private void DrawPacing()
     {
