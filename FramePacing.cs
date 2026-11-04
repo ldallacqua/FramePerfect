@@ -147,6 +147,45 @@ internal sealed unsafe partial class FramePacing : IDisposable
 
     public string SwapChainInfo => this.swapLine;
 
+    /// <summary>DXGI_SWAP_EFFECT the game created its swap chain with (-1 = not seen yet). 0/1 = legacy blit model.</summary>
+    public int SwapEffect { get; private set; } = -1;
+
+    public bool BlitModel => this.SwapEffect is 0 or 1;
+
+    /// <summary>Windows 11 "Optimizations for windowed games" (upgrades blit-model DX10/11 swap chains to flip model),
+    /// read from HKCU\Software\Microsoft\DirectX\UserGpuPreferences: per-app value first, then the global one.</summary>
+    public (bool? On, string Source) WindowedOptimizationsState { get; private set; } = (null, "?");
+
+    private static readonly string? ExePath = Process.GetCurrentProcess().MainModule?.FileName;
+
+    private static (bool? On, string Source) WindowedOptimizations()
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\DirectX\UserGpuPreferences");
+            if (key == null)
+                return (null, "Windows default");
+            var exe = ExePath;
+            if (exe != null && key.GetValue(exe) is string app && Parse(app) is { } a)
+                return (a, "set for ffxiv_dx11.exe");
+            if (key.GetValue("DirectXUserGlobalSettings") is string global && Parse(global) is { } g)
+                return (g, "global setting");
+            return (null, "Windows default");
+        }
+        catch
+        {
+            return (null, "unreadable");
+        }
+
+        static bool? Parse(string s)
+        {
+            var i = s.IndexOf("SwapEffectUpgradeEnable=", StringComparison.OrdinalIgnoreCase);
+            if (i < 0)
+                return null;
+            return s.Length > i + 24 && s[i + 24] == '1';
+        }
+    }
+
     public string PresentStats { get; private set; } = string.Empty;
 
     public bool HookOk => this.presentHook != null;
@@ -174,12 +213,21 @@ internal sealed unsafe partial class FramePacing : IDisposable
         if (r == null || !this.reflexLive)
             return;
 
+        // With a separate render thread the game thread's work for the previous frame ends here.
+        // (On a single thread SIMULATION_END is sent at present instead, so the markers stay in order.)
+        var prev = (ulong)Interlocked.Read(ref this.simFrameId);
+        if (prev > 0 && this.SeparateRenderThread)
+            r.Marker(prev, Reflex.SimulationEnd);
+
         var st = r.Sleep();
         if (st != 0 && this.sleepErrors++ < 3)
             this.log.Warn($"Reflex: NvAPI_D3D_Sleep returned {st}");
         var id = (ulong)Interlocked.Increment(ref this.simFrameId);
         r.Marker(id, Reflex.SimulationStart);
     }
+
+    /// <summary>Known once both the framework thread and the present thread have run.</summary>
+    private bool SeparateRenderThread => this.presentThreadId != 0 && this.mainThreadId != 0 && this.presentThreadId != this.mainThreadId;
 
     public void Update()
     {
@@ -279,11 +327,13 @@ internal sealed unsafe partial class FramePacing : IDisposable
         }
 
         this.GameHzNow = gameHz;
+        this.WindowedOptimizationsState = WindowedOptimizations();
+        var (wo, woSource) = this.WindowedOptimizationsState;
 
         var line = $"DISPLAY: window on {this.WindowMonitor} {this.WindowHz} Hz | primary {this.PrimaryMonitor} {this.PrimaryHz} Hz | " +
                    $"{count} monitor(s): {this.MonitorList} | game refresh value {gameHz} Hz (read at startup: {this.gameHzOriginal} Hz, fix {(this.config.FixRefreshRate ? "on" : "off")}) | " +
                    $"limiter mode={this.LimitMode} ({LimitModeName(this.LimitMode, this.LimitFps)}) cfg mode={*(uint*)(dev + DevLimitModeCfg)} cfg fps={*(ushort*)(dev + DevLimitFpsCfg)} " +
-                   $"fullscreenFlag={dev[DevFullscreen]} | game config Fps={ReadConfig("Fps")} FPSInActive={ReadConfig("FPSInActive")} ScreenMode={ReadConfig("ScreenMode")}";
+                   $"fullscreenFlag={dev[DevFullscreen]} | windowed-game optimizations {(wo == true ? "on" : wo == false ? "off" : "not set")} ({woSource}) | game config Fps={ReadConfig("Fps")} FPSInActive={ReadConfig("FPSInActive")} ScreenMode={ReadConfig("ScreenMode")}";
         if (line != this.lastDisplayLine)
         {
             this.lastDisplayLine = line;
@@ -322,7 +372,13 @@ internal sealed unsafe partial class FramePacing : IDisposable
             }
             else
             {
+                // GetLatency only returns reports for frames that carry the full marker set
+                // (2026-11-04 test: SIMULATION_START + PRESENT_* alone gave 0 reports).
                 this.lastPresentFrameId = fid;
+                if (!this.SeparateRenderThread)
+                    r.Marker(fid, Reflex.SimulationEnd);
+                r.Marker(fid, Reflex.RenderSubmitStart);
+                r.Marker(fid, Reflex.RenderSubmitEnd);
                 r.Marker(fid, Reflex.PresentStart);
             }
         }
@@ -361,10 +417,10 @@ internal sealed unsafe partial class FramePacing : IDisposable
             this.lastPresentTicks = t0;
         }
 
-        if (!this.threadLogged)
+        this.presentThreadId = Environment.CurrentManagedThreadId;
+        if (!this.threadLogged && this.mainThreadId != 0)
         {
             this.threadLogged = true;
-            this.presentThreadId = Environment.CurrentManagedThreadId;
             this.log.Enqueue($"present thread id={this.presentThreadId}, framework thread id={this.mainThreadId} " +
                              $"({(this.presentThreadId == this.mainThreadId ? "same thread" : "separate render thread")})");
         }
@@ -389,7 +445,10 @@ internal sealed unsafe partial class FramePacing : IDisposable
             DXGI_SWAP_CHAIN_FULLSCREEN_DESC fs;
             if (SUCCEEDED(sc1->GetDesc1(&d)))
             {
+                this.SwapEffect = (int)d.SwapEffect;
                 sb.Append($"{SwapEffectName(d.SwapEffect)} buffers={d.BufferCount} {d.Width}x{d.Height} {d.Format} flags=0x{d.Flags:X}");
+                if ((d.Flags & (uint)DXGI_SWAP_CHAIN_FLAG.DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH) != 0)
+                    sb.Append("(ALLOW_MODE_SWITCH)");
                 if ((d.Flags & (uint)DXGI_SWAP_CHAIN_FLAG.DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING) != 0)
                     sb.Append("(ALLOW_TEARING)");
                 if ((d.Flags & (uint)DXGI_SWAP_CHAIN_FLAG.DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT) != 0)
@@ -567,6 +626,19 @@ internal sealed unsafe partial class FramePacing : IDisposable
             yield return new SettingCheck("Refresh rate the game uses", $"{this.GameHzNow} Hz", CheckLevel.Change,
                                           $"The game read {orig} Hz at startup (primary monitor), but its window is on a {this.WindowHz} Hz monitor. " +
                                           "Turn on \"Use the refresh rate of the monitor the game is on\".");
+
+        if (this.BlitModel && !this.Fullscreen)
+        {
+            var (on, source) = this.WindowedOptimizationsState;
+            var iflip = this.LastSleepStatus?.FullscreenIFlip;
+            var state = $"Optimizations for windowed games: {(on == true ? "on" : on == false ? "off" : "not set")} ({source})" +
+                        (iflip.HasValue ? $", driver sees independent flip: {(iflip.Value ? "yes" : "no")}" : string.Empty);
+            yield return new SettingCheck("Swap chain", "legacy blit model (BLT_DISCARD)", iflip == true ? CheckLevel.Ok : CheckLevel.Info,
+                                          "In borderless, Windows composites every frame of a blit-model swap chain: a little more latency, " +
+                                          "and G-Sync only through NVIDIA's windowed G-Sync, which is what flickered. Windows 11 can upgrade it to " +
+                                          "flip model: Settings > System > Display > Graphics > Optimizations for windowed games (restart the game). " +
+                                          $"Now: {state}.");
+        }
 
         var capOn = this.config.FrameCapFps > 0 && this.ReflexAvailable;
         if (capOn && this.LimitMode != 0)

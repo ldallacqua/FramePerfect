@@ -168,8 +168,22 @@ FFXIV has no V-Sync option because **its frame-rate limit is V-Sync**. `Kernel::
   - Reflex sleep status: `bFsVrr` says whether the driver has G-Sync engaged, plus control-panel V-Sync and iFlip
   - Reflex latency (simulation start → GPU done)
 
+### First in-game test (2026-11-04, 4K, 120 Hz, single monitor)
+
+- **Reflex works.**
+  - The driver reports `lowLatency=True gameSleep=True` (it sees the plugin's `NvAPI_D3D_Sleep` every frame) and `status=0`.
+  - The 116 fps cap gives presents at p50 = 8.62 ms with p05–p99 = 8.4–9.2 ms and 0–1% swings. Uncapped it ran ~205 fps (4.8 ms).
+- **Latency reports were empty** with only `SIMULATION_START` + `PRESENT_*` (`GetLatency=0 (0 reports)`). The plugin now also sends `SIMULATION_END` and `RENDERSUBMIT_START/END`.
+- **Limiter mapping:** game config `Fps=0` ↔ `Device+0xA4 = 0` (None), confirmed. The game read 120 Hz, which is correct on one monitor.
+- **The swap chain is the legacy blit model:** `BLT_DISCARD`, 2 buffers, `ALLOW_MODE_SWITCH`, windowed.
+  - In borderless, Windows composites every frame: the driver reports `iFlip=False`, and `GetFrameStatisticsMedia` is unsupported (`0x887A0004`).
+  - G-Sync in borderless then only works through NVIDIA's windowed-G-Sync path, the most likely home of the DLSS 5 flicker.
+  - Windows 11's **Optimizations for windowed games** upgrades blit-model DX11 swap chains to flip model, which allows independent flip. The checklist shows the setting (read from the registry) and whether the driver sees independent flip.
+- **DLSS 5:** ~86 fps. The game's Present takes ~7 ms (the D3D11 → D3D12 bridge waits for the NR work inside Present). When DLSS 5 can't hold the cap, pacing swung up to 20% (10.4 / 12 ms frames). That is exactly what G-Sync followed; a cap DLSS 5 can hold (e.g. 80) keeps it flat.
+
 ### Testing G-Sync again with DLSS 5
 
+0. Windows 11: Settings > System > Display > Graphics > **Optimizations for windowed games: On**. Restart the game, then check the Swap chain line in the checklist: "driver sees independent flip: yes".
 1. Game: frame rate limit **None**. Plugin: Reflex **On**, frame cap at a rate DLSS 5 always holds (e.g. 80), or the G-Sync cap if it can.
 2. NVIDIA Control Panel: `ffxiv_dx11.exe` Monitor Technology back to **G-SYNC**, V-Sync **On** (driver).
 3. Move the camera with DLSS 5 on and compare the log lines:
