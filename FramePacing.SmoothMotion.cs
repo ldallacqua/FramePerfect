@@ -40,6 +40,28 @@ internal sealed unsafe partial class FramePacing
     /// <summary>Frames on screen per frame the game renders.</summary>
     public int FrameMultiplier => Math.Max(this.SmoothMotionLoaded ? 2 : 1, this.DriverFgMultiplier);
 
+    /// <summary>
+    /// How much the driver stretches the Reflex minimum interval we set: 2 with Smooth Motion (it treats the interval as
+    /// the time between frames on screen), else 1. Measured from the sleep status; until then, 2 while Smooth Motion is loaded.
+    /// </summary>
+    public int DriverIntervalScale => this.driverIntervalScale > 0 ? this.driverIntervalScale : this.SmoothMotionLoaded ? 2 : 1;
+
+    /// <summary>From the stats line: the sleep interval the driver reports, divided by the one we set.</summary>
+    private void MeasureDriverIntervalScale(Reflex.SleepStatus s)
+    {
+        if (this.reflexApplied is not { IntervalUs: > 0 } applied || s.Result != 0 || s.SleepIntervalUs == 0)
+            return;
+        if ((DateTime.Now - this.reflexAppliedAt).TotalSeconds < 1.5)
+            return; // the status may still show the previous interval
+        var ratio = (double)s.SleepIntervalUs / applied.IntervalUs;
+        var k = (int)Math.Round(ratio);
+        if (k is < 1 or > 4 || Math.Abs(ratio - k) > 0.05 || k == this.driverIntervalScale)
+            return;
+        this.log.Info($"Reflex: the driver sleeps {s.SleepIntervalUs} us for the {applied.IntervalUs} us we set: x{k}" +
+                      (this.SmoothMotionLoaded ? " (Smooth Motion)" : string.Empty) + "; the cap divides by that from now on");
+        this.driverIntervalScale = k;
+    }
+
     /// <summary>G-Sync is in use for the game: true, false (Fixed Refresh, off, ...), or null while not known.</summary>
     public bool? VrrForGame => this.vrrForGame;
 

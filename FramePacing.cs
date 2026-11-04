@@ -62,6 +62,8 @@ internal sealed unsafe partial class FramePacing : IDisposable
     private string reflexError = string.Empty;
     private bool reflexTried;
     private (bool LowLatency, bool Boost, uint IntervalUs)? reflexApplied;
+    private DateTime reflexAppliedAt;
+    private int driverIntervalScale; // 0 = not measured yet
     private volatile bool reflexLive;
     private long simFrameId;
     private ulong lastPresentFrameId;
@@ -278,15 +280,26 @@ internal sealed unsafe partial class FramePacing : IDisposable
         if (this.reflex == null)
             return;
 
-        var interval = rendered > 0 ? (uint)Math.Round(1_000_000.0 / Math.Clamp(rendered, 20f, 1000f)) : 0u;
+        // With Smooth Motion the driver stretches the interval we give it (2026-11-04, driver 621.01: we set 16667 us,
+        // the sleep status said 33334 us and the game ran at 30). So divide by what the driver multiplies by.
+        var scale = this.DriverIntervalScale;
+        var interval = rendered > 0 ? (uint)Math.Round(1_000_000.0 / Math.Clamp(rendered, 20f, 1000f) / scale) : 0u;
+
+        // DWM's refresh reading wobbles (120 / 120.002 Hz): keep the applied interval unless it moved by more than 0.3%.
+        if (this.reflexApplied is { } a && a.LowLatency == (mode != ReflexMode.Off) && a.Boost == (mode == ReflexMode.Boost) &&
+            a.IntervalUs != 0 && interval != 0 && Math.Abs((double)interval - a.IntervalUs) <= a.IntervalUs * 0.003)
+            interval = a.IntervalUs;
+
         var want = (mode != ReflexMode.Off, mode == ReflexMode.Boost, interval);
         if (this.reflexApplied != want)
         {
             var st = this.reflex.SetSleepMode(want.Item1, want.Item2, want.Item3);
             this.reflexApplied = want;
+            this.reflexAppliedAt = DateTime.Now;
             this.reflexLive = wanted;
             this.log.Info($"Reflex: SetSleepMode(lowLatency={want.Item1}, boost={want.Item2}, minimumIntervalUs={want.Item3}" +
-                          $"{(interval > 0 ? $" = game renders at most {1_000_000.0 / interval:0.##} fps; cap {this.CapDescription}" : string.Empty)}) -> {st}");
+                          (scale > 1 ? $" (the driver multiplies it by {scale} with Smooth Motion, {(this.driverIntervalScale == 0 ? "expected" : "measured")})" : string.Empty) +
+                          $"{(interval > 0 ? $" = game renders at most {1_000_000.0 / ((double)interval * scale):0.##} fps; cap {this.CapDescription}" : string.Empty)}) -> {st}");
             this.ReflexState = !wanted ? "off" : st == 0 ? "active" : $"SetSleepMode error {st}";
         }
     }
@@ -578,6 +591,7 @@ sb.Append($" {this.OutputColor}"); // from a fresh DXGI factory on the G-Sync wo
         {
             var s = r.GetSleepStatus();
             this.LastSleepStatus = s;
+            this.MeasureDriverIntervalScale(s);
             var lat = new StringBuilder();
             var st = r.GetLatency(this.reports);
             if (st == 0 && this.reports.Count > 0)
@@ -614,7 +628,7 @@ sb.Append($" {this.OutputColor}"); // from a fresh DXGI factory on the G-Sync wo
 
             this.log.Info($"  REFLEX: {this.config.Reflex} cap={this.CapDescription} | " +
                           $"status={s.Result} lowLatency={s.LowLatency} gsync(fsVrr)={s.FullscreenVrr} cplVsync={s.CplVsyncOn} iFlip={s.FullscreenIFlip} " +
-                          $"gameSleep={s.UseGameSleep} sleepInterval={s.SleepIntervalUs}us frameGen={(s.FgMultiplier > 1 ? $"{s.FgMultiplier}x" : "off")} | sleep={r.LastSleepStatus} marker={r.LastMarkerStatus} | {lat}");
+                          $"gameSleep={s.UseGameSleep} sleepInterval={s.SleepIntervalUs}us (we set {this.reflexApplied?.IntervalUs ?? 0}us, driver x{this.DriverIntervalScale}) frameGen={(s.FgMultiplier > 1 ? $"{s.FgMultiplier}x" : "off")} | sleep={r.LastSleepStatus} marker={r.LastMarkerStatus} | {lat}");
         }
     }
 
