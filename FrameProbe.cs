@@ -5,7 +5,7 @@ using TerraFX.Interop.DirectX;
 using TerraFX.Interop.Windows;
 using static TerraFX.Interop.Windows.Windows;
 
-namespace XivDlssFix;
+namespace FramePerfect;
 
 /// <summary>
 /// Flash detector: measures the mean brightness of the final 3D image (DLSS output, after DLSS 5 and the

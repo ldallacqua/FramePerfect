@@ -5,7 +5,7 @@ using TerraFX.Interop.Windows;
 using static TerraFX.Interop.DirectX.DirectX;
 using static TerraFX.Interop.Windows.Windows;
 
-namespace XivDlssFix;
+namespace FramePerfect;
 
 /// <summary>Small D3D11 helpers shared by the post-DLSS passes (sharpening, flash probe).</summary>
 internal static unsafe class D3DUtil

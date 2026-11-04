@@ -5,7 +5,7 @@ using TerraFX.Interop.DirectX;
 using TerraFX.Interop.Windows;
 using static TerraFX.Interop.Windows.Windows;
 
-namespace XivDlssFix;
+namespace FramePerfect;
 
 /// <summary>
 /// Contrast Adaptive Sharpening (AMD CAS) run on the DLSS output texture right after the game's DLSS
