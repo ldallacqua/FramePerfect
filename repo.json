@@ -1,0 +1,34 @@
+[
+  {
+    "Author": "Lucas",
+    "Name": "Frame Perfect",
+    "InternalName": "FramePerfect",
+    "AssemblyVersion": "2.0.0.0",
+    "Punchline": "Sharper DLSS, perfectly paced frames and lower input lag on NVIDIA cards.",
+    "Description": "Makes FFXIV look sharper and feel smoother on NVIDIA RTX cards, with no setup.\n\n- Locks DLSS at a fixed resolution (DLAA to Ultra Performance, or custom): no more blur from the game's dynamic resolution while the camera moves.\n- NVIDIA Reflex: lower input lag and a frame cap far more precise than the game's own, picked for your screen automatically (G-Sync, fixed refresh rate, or NVIDIA Smooth Motion frame generation).\n- Keeps every frame in step with your screen, so none are dropped (measured: 0 dropped frames at 120 Hz).\n- Sharpening, newer DLSS versions straight from NVIDIA, and the right DLSS model.\n- Sets the game options it needs for you, and puts yours back with one click.\n- Explains the rest in plain words, including how to stop G-Sync brightness flicker in borderless.",
+    "ApplicableVersion": "any",
+    "RepoUrl": "https://github.com/ldallacqua/FramePerfect",
+    "Tags": [
+      "dlss",
+      "nvidia",
+      "reflex",
+      "fps",
+      "frame pacing",
+      "graphics",
+      "smooth motion",
+      "latency"
+    ],
+    "CategoryTags": [
+      "utility"
+    ],
+    "DalamudApiLevel": 15,
+    "LoadPriority": 0,
+    "AcceptsFeedback": true,
+    "IsHide": false,
+    "IsTestingExclusive": false,
+    "LastUpdate": 1793827449,
+    "DownloadLinkInstall": "https://github.com/ldallacqua/FramePerfect/releases/latest/download/latest.zip",
+    "DownloadLinkUpdate": "https://github.com/ldallacqua/FramePerfect/releases/latest/download/latest.zip",
+    "DownloadLinkTesting": "https://github.com/ldallacqua/FramePerfect/releases/latest/download/latest.zip"
+  }
+]

@@ -1,0 +1,104 @@
+# Builds Frame Perfect and publishes it to the custom plugin repository.
+#
+# Push a tag that matches <Version> in FramePerfect.csproj, e.g. v2.0.0 for 2.0.0.0:
+#   git tag v2.0.0 && git push origin v2.0.0
+#
+# The workflow builds the plugin, attaches latest.zip to a GitHub release, then
+# updates repo.json on main. repo.json's download links always point at the latest
+# release's latest.zip, so Dalamud offers the update as soon as repo.json changes.
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Check out the tag
+        uses: actions/checkout@v5
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      # Dalamud.NET.Sdk builds against the Dalamud in %APPDATA%\XIVLauncher\addon\Hooks\dev
+      # (or DALAMUD_HOME if set). latest.zip is Dalamud's current release build.
+      - name: Download Dalamud
+        run: |
+          Invoke-WebRequest https://goatcorp.github.io/dalamud-distrib/latest.zip -OutFile "$env:RUNNER_TEMP\dalamud.zip"
+          Expand-Archive -Force "$env:RUNNER_TEMP\dalamud.zip" "$env:APPDATA\XIVLauncher\addon\Hooks\dev"
+
+      - name: Build
+        run: dotnet build -c Release
+
+      # DalamudPackager writes the full manifest (with AssemblyVersion and DalamudApiLevel)
+      # next to the dll. The tag has to match it, so a release can't ship the wrong version.
+      - name: Check the tag matches the plugin version
+        id: version
+        run: |
+          $manifest = Get-Content bin/Release/FramePerfect.json -Raw | ConvertFrom-Json
+          $parts = @($env:GITHUB_REF_NAME.TrimStart('v').Split('.'))
+          while ($parts.Count -lt 4) { $parts += '0' }
+          $tagVersion = $parts -join '.'
+          if ($tagVersion -ne $manifest.AssemblyVersion) {
+            throw "Tag $env:GITHUB_REF_NAME is $tagVersion, but the plugin is $($manifest.AssemblyVersion). Change <Version> in FramePerfect.csproj or use another tag."
+          }
+          "version=$($env:GITHUB_REF_NAME.TrimStart('v'))" >> $env:GITHUB_OUTPUT
+          Write-Host "Frame Perfect $($manifest.AssemblyVersion), Dalamud API $($manifest.DalamudApiLevel)"
+
+      - name: Package latest.zip
+        run: |
+          $files = 'FramePerfect.dll', 'FramePerfect.json', 'FramePerfect.deps.json' | ForEach-Object { "bin/Release/$_" }
+          Compress-Archive -Path $files -DestinationPath "$env:RUNNER_TEMP\latest.zip" -Force
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [IO.Compression.ZipFile]::OpenRead("$env:RUNNER_TEMP\latest.zip")
+          $zip.Entries | ForEach-Object { Write-Host "$($_.FullName)  $($_.Length) bytes" }
+          $zip.Dispose()
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view $env:GITHUB_REF_NAME *> $null
+          if ($LASTEXITCODE -eq 0) {
+            # Re-run of the same tag: replace the zip, keep the release.
+            gh release upload $env:GITHUB_REF_NAME "$env:RUNNER_TEMP\latest.zip" --clobber
+          } else {
+            gh release create $env:GITHUB_REF_NAME "$env:RUNNER_TEMP\latest.zip" `
+              --title "Frame Perfect ${{ steps.version.outputs.version }}" `
+              --generate-notes --verify-tag --latest
+          }
+
+      - name: Check out main
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          path: main-branch
+
+      - name: Update repo.json on main
+        run: |
+          ./.github/scripts/update-repo-json.ps1 -Manifest bin/Release/FramePerfect.json -RepoJson main-branch/repo.json
+          Set-Location main-branch
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add repo.json
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) { Write-Host 'repo.json is already up to date.'; exit 0 }
+          git commit -m "repo.json: Frame Perfect ${{ steps.version.outputs.version }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git push origin HEAD:main

@@ -382,3 +382,12 @@ dotnet build -c Release
 ```
 
 Needs the .NET 10 SDK and `Dalamud.NET.Sdk/15.0.0`. It builds against the Dalamud in `%APPDATA%\XIVLauncher\addon\Hooks\dev`. Output: `bin\Release\`.
+
+### Releases
+
+Players install from the custom plugin repository, `repo.json` on `main`. To publish a version:
+
+1. Set `<Version>` in `FramePerfect.csproj` (for example `2.0.1.0`) and merge it to `main`.
+2. Tag that commit with the same version and push the tag: `git tag v2.0.1` then `git push origin v2.0.1`.
+
+[`.github/workflows/release.yml`](../.github/workflows/release.yml) then builds the plugin against Dalamud's current release, fails if the tag doesn't match the plugin's version, attaches `latest.zip` (`FramePerfect.dll`, `FramePerfect.json`, `FramePerfect.deps.json`) to a GitHub release, and updates `repo.json` on `main` from the built manifest ([`.github/scripts/update-repo-json.ps1`](../.github/scripts/update-repo-json.ps1)). The download links in `repo.json` always point at the latest release, so Dalamud offers the update once `repo.json` changes (its cache can take a few minutes).

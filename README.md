@@ -77,13 +77,30 @@ Your own values are saved first. Untick any option to keep your own, or press **
 
 ## Install
 
-Frame Perfect isn't in a plugin repository yet, so for now it installs as a dev plugin:
+Frame Perfect has its own plugin repository. Add it once, and Dalamud installs Frame Perfect and keeps it up to date like any other plugin.
 
-1. Build it (`dotnet build -c Release`, see [Build](docs/HOW-IT-WORKS.md#build)), or take `FramePerfect.dll`, `FramePerfect.json` and `FramePerfect.deps.json` from a release.
-2. Copy the three files to `%APPDATA%\XIVLauncher\devPlugins\FramePerfect\`.
-3. In the game: `/xlsettings` > Experimental > Dev Plugin Locations, add `FramePerfect.dll` from that folder, then enable **Frame Perfect** in `/xlplugins` > Dev Tools.
+1. In the game, type `/xlsettings` and open the **Experimental** tab.
+2. Scroll to **Custom Plugin Repositories**. The first time, Dalamud shows a warning about third-party plugins: read it and click **Ok, I have read and understood this warning**.
+3. Paste this URL into the empty field and click **+**:
+   ```
+   https://raw.githubusercontent.com/ldallacqua/FramePerfect/main/repo.json
+   ```
+   Make sure its **Enabled** box is ticked.
+4. Click the **Save** button at the bottom right of the settings window.
+5. Type `/xlplugins`, search for **Frame Perfect** under **All Plugins** and click **Install**.
 
 The window opens on first login. After that: `/frameperfect`, or click the frame rate in the server info bar.
+
+<details>
+<summary><b>Alternative: install as a dev plugin</b> (to build it yourself or test changes)</summary>
+
+1. Build it (`dotnet build -c Release`, see [Build](docs/HOW-IT-WORKS.md#build)), or take `latest.zip` from the [latest release](https://github.com/ldallacqua/FramePerfect/releases/latest) and unzip it.
+2. Copy `FramePerfect.dll`, `FramePerfect.json` and `FramePerfect.deps.json` to `%APPDATA%\XIVLauncher\devPlugins\FramePerfect\`.
+3. In the game: `/xlsettings` > Experimental > Dev Plugin Locations, add `FramePerfect.dll` from that folder, then enable **Frame Perfect** in `/xlplugins` > Dev Tools.
+
+A dev plugin doesn't update itself. Don't install it both ways at once: remove the dev plugin before installing from the repository.
+
+</details>
 
 **Coming from DLSS Fix?** That's this plugin's old name. Your settings carry over. Remove the old DLSS Fix dev plugin first: Frame Perfect won't start next to it, because both would hook the same game code.
 
