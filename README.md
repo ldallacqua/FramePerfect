@@ -50,6 +50,7 @@ Works alongside RenoDX's DLSS 5 (Neural Rendering) addon. See [DLSS 5 and G-Sync
 | `/dlssfix dll update` | download, verify and install NVIDIA's latest `nvngx_dlss.dll` (takes effect on the next game start) |
 | `/dlssfix reflex off\|on\|boost` | NVIDIA Reflex low-latency mode |
 | `/dlssfix cap 80` / `cap gsync` / `cap off` | Reflex frame cap in fps (`gsync` = NVIDIA's G-Sync cap for the monitor the game is on) |
+| `/dlssfix test [seconds]` / `test stop` | unattended G-Sync test: caps 60 / 100 / 116 twice (20 s each by default) while the camera turns at a constant 29°/s. It logs one `TEST step` line per step, then restores the cap. Keep the game focused and don't touch the mouse. |
 | `/dlssfix on\|off` | enable / disable the plugin |
 | `/dlssfix apply` | rebuild the render targets now |
 | `/dlssfix reset` | reset DLSS / DLSS 5 history on the next frame (diagnostic) |
@@ -260,6 +261,10 @@ After switching Monitor Technology from Fixed Refresh back to G-SYNC, there was 
     - `PRESENT:` present-to-present p05/p50/p95/p99, swings, time inside the game's limiter + Present, sync interval and measured vblank rate. Every 5 s.
     - `REFLEX:` mode, cap, driver sleep status (`gsync(fsVrr)` = exclusive fullscreen G-Sync only, `cplVsync`, `iFlip`, `gameSleep`, `frameGen`) and latency. Every 5 s while Reflex or the cap is on.
     - `GSYNC:` live VRR state of the game's monitor (`active`, `requested`, `possible`, `displayInVrrMode`, `indicator`), whether the game window has focus, and the G-Sync fields of the game's driver profile. Written when something changes.
+    - `TEST step N/M cap=X`, during `/dlssfix test`: focus %, G-Sync active %, DLSS 5 state, then three interval distributions with p05–p99, swings and a histogram:
+      - `game frames`: framework ticks
+      - `DWM refreshes`: `DwmGetCompositionTimingInfo` vblanks, i.e. what the compositor actually refreshed
+      - `DWM compositions`
     - `present thread id=..., framework thread id=...` once, to show whether presenting runs on its own thread
 - DLSS 5 (RenoDX): `ReShade.log` in the game folder (`DLSS5 Generic`, `NR-VERDICT`, `frame contract`). The plugin reads it incrementally on a worker thread for the Debug tab.
 

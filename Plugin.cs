@@ -35,6 +35,8 @@ public sealed class Plugin : IDalamudPlugin
 
     internal DllUpdater Updater { get; }
 
+    internal TestRunner Test { get; }
+
     public Plugin()
     {
         this.Config = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
@@ -44,13 +46,14 @@ public sealed class Plugin : IDalamudPlugin
         this.Controller.Pacing = this.Pacing;
         this.Updater = new DllUpdater(System.IO.Path.GetDirectoryName(System.Diagnostics.Process.GetCurrentProcess().MainModule!.FileName)!, this.Log);
         this.notifier = new GameSettingsNotifier(this);
+        this.Test = new TestRunner(this);
 
         this.configWindow = new ConfigWindow(this);
         this.windows.AddWindow(this.configWindow);
 
         Commands.AddHandler(CommandName, new CommandInfo(this.OnCommand)
         {
-            HelpMessage = "Opens the window. /dlssfix status | mode <dlaa|quality|balanced|performance|ultra|custom|game> | custom <33-100> | preset <default|j|k|l|m|f|game> | sharp <0-100> | lock <on|off> | reflex <off|on|boost> | cap <fps|off|gsync> | flash <on|off> | dll [update] | reset | on | off | apply",
+            HelpMessage = "Opens the window. /dlssfix status | mode <dlaa|quality|balanced|performance|ultra|custom|game> | custom <33-100> | preset <default|j|k|l|m|f|game> | sharp <0-100> | lock <on|off> | reflex <off|on|boost> | cap <fps|off|gsync> | test [seconds|stop] | flash <on|off> | dll [update] | reset | on | off | apply",
         });
 
         PluginInterface.UiBuilder.Draw += this.windows.Draw;
@@ -67,6 +70,7 @@ public sealed class Plugin : IDalamudPlugin
         {
             this.Pacing.FrameStart(); // Reflex sleep point: before the game samples input this frame
             this.Pacing.Update();
+            this.Test.Tick();
             this.Controller.Update();
             this.notifier.Tick();
         }
@@ -106,6 +110,18 @@ public sealed class Plugin : IDalamudPlugin
                     if (c.Level != CheckLevel.Ok)
                         Chat.Print($"[DLSS Fix] {GameSettings.LevelTag(c.Level)} {c.Option} = {c.Current}: {c.Advice}");
                 this.Log.Info($"/dlssfix status: {msg} || {dll} || {flash}");
+                return;
+            case "test":
+                if (parts.Length > 1 && parts[1] == "stop")
+                {
+                    this.Test.Stop("stopped");
+                    return;
+                }
+
+                var perStep = parts.Length > 1 && double.TryParse(parts[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var sec) ? sec : 20;
+                this.Test.Start(perStep, new[] { 60f, 100f, 116f, 60f, 100f, 116f });
+                Chat.Print($"[DLSS Fix] G-Sync test: caps 60 / 100 / 116, twice, {Math.Clamp(perStep, 6, 120):0} s each, with the camera turning. " +
+                           "Keep the game window focused and don't touch the mouse. /dlssfix test stop ends it.");
                 return;
             case "reset":
                 this.Controller.RequestHistoryReset("command /dlssfix reset");
@@ -253,7 +269,7 @@ public sealed class Plugin : IDalamudPlugin
                 changed = true;
                 break;
             default:
-                Chat.PrintError("[DLSS Fix] unknown command. Use /dlssfix status | mode | custom | preset | sharp | lock | reflex | cap | flash | dll | reset | on | off | apply");
+                Chat.PrintError("[DLSS Fix] unknown command. Use /dlssfix status | mode | custom | preset | sharp | lock | reflex | cap | test | flash | dll | reset | on | off | apply");
                 return;
         }
 
@@ -273,6 +289,7 @@ public sealed class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.OpenMainUi -= this.ToggleWindow;
         Commands.RemoveHandler(CommandName);
         this.windows.RemoveAllWindows();
+        this.Test.Stop("ended (plugin unloaded)");
         this.Pacing.Dispose();
         this.Controller.Dispose();
         this.Log.Dispose();
