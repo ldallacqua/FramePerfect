@@ -3,6 +3,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
+using TerraFX.Interop.DirectX;
+using TerraFX.Interop.Windows;
+using static TerraFX.Interop.DirectX.DirectX;
 
 namespace XivDlssFix;
 
@@ -70,6 +73,20 @@ internal sealed unsafe partial class FramePacing
                 catch
                 {
                     this.Vrr = null;
+                }
+
+                try
+                {
+                    var (ok, hdr, desc) = ReadOutputColor(device);
+                    if (ok)
+                    {
+                        this.OutputHdr = hdr;
+                        this.OutputColor = desc;
+                    }
+                }
+                catch
+                {
+                    // keep the last value
                 }
             });
         }
@@ -154,6 +171,60 @@ internal sealed unsafe partial class FramePacing
                                           this.GameFocused
                                               ? "G-Sync is allowed for this game, but the driver doesn't report variable refresh on the game's monitor right now."
                                               : "Click into the game: windowed G-Sync only runs while the game window has focus.");
+    }
+
+    /// <summary>
+    /// The display's current color mode (HDR10 or SDR). This needs a new DXGI factory every time: outputs from an
+    /// existing factory, like the game's swap chain's, keep reporting the color space from when that factory was made.
+    /// Turning Windows HDR off mid-game didn't show up through them (seen 2026-11-04). Worker thread only: a few ms.
+    /// </summary>
+    private static (bool Ok, bool Hdr, string Desc) ReadOutputColor(string device)
+    {
+#pragma warning disable CA1416 // IDXGIOutput6 is Windows 10 1803+; QueryInterface just fails before that
+        IDXGIFactory1* factory = null;
+        var iidFactory = IID.IID_IDXGIFactory1;
+        if (CreateDXGIFactory1(&iidFactory, (void**)&factory) < 0 || factory == null)
+            return (false, false, "?");
+        try
+        {
+            IDXGIAdapter1* adapter = null;
+            for (uint a = 0; factory->EnumAdapters1(a, &adapter) >= 0; a++)
+            {
+                IDXGIOutput* output = null;
+                for (uint o = 0; adapter->EnumOutputs(o, &output) >= 0; o++)
+                {
+                    IDXGIOutput6* output6 = null;
+                    var iid6 = IID.IID_IDXGIOutput6;
+                    if (output->QueryInterface(&iid6, (void**)&output6) >= 0 && output6 != null)
+                    {
+                        DXGI_OUTPUT_DESC1 d;
+                        if (output6->GetDesc1(&d) >= 0 &&
+                            new string(MemoryMarshal.CreateReadOnlySpanFromNullTerminated((char*)&d.DeviceName)) == device)
+                        {
+                            var hdr = d.ColorSpace == DXGI_COLOR_SPACE_TYPE.DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
+                            var desc = hdr ? $"HDR10 ({d.BitsPerColor}-bit, {d.MaxLuminance:0} nits)" : $"SDR ({d.BitsPerColor}-bit)";
+                            output6->Release();
+                            output->Release();
+                            adapter->Release();
+                            return (true, hdr, desc);
+                        }
+
+                        output6->Release();
+                    }
+
+                    output->Release();
+                }
+
+                adapter->Release();
+            }
+
+            return (false, false, "?");
+        }
+        finally
+        {
+            factory->Release();
+        }
+#pragma warning restore CA1416
     }
 
     [LibraryImport("user32.dll")]
