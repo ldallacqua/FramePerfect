@@ -87,6 +87,10 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>The plugin picks the cap: the G-Sync cap with G-Sync, the refresh rate with Fixed Refresh (halved for rendering with Smooth Motion).</summary>
     public bool FrameCapAuto { get; set; } = false;
 
+    /// <summary>With Fixed Refresh in borderless, start every frame at the same point of the refresh (keeps presents away
+    /// from the moment DWM picks the next frame, where they get dropped).</summary>
+    public bool RefreshLock { get; set; } = true;
+
     /// <summary>Give the game the refresh rate of the monitor its window is on (it reads the primary monitor once at startup).</summary>
     public bool FixRefreshRate { get; set; } = true;
 

@@ -230,6 +230,7 @@ internal sealed unsafe partial class FramePacing : IDisposable
         var st = r.Sleep();
         if (st != 0 && this.sleepErrors++ < 3)
             this.log.Warn($"Reflex: NvAPI_D3D_Sleep returned {st}");
+        this.RefreshLockWait();
         var id = (ulong)Interlocked.Increment(ref this.simFrameId);
         r.Marker(id, Reflex.SimulationStart);
     }
@@ -283,7 +284,9 @@ internal sealed unsafe partial class FramePacing : IDisposable
         // With Smooth Motion the driver stretches the interval we give it (2026-11-04, driver 621.01: we set 16667 us,
         // the sleep status said 33334 us and the game ran at 30). So divide by what the driver multiplies by.
         var scale = this.DriverIntervalScale;
-        var interval = rendered > 0 ? (uint)Math.Round(1_000_000.0 / Math.Clamp(rendered, 20f, 1000f) / scale) : 0u;
+        var lockK = this.RefreshLockFactor(rendered);
+        var share = lockK > 0 ? LockReflexShare : 1.0; // with the refresh lock, Reflex never holds a frame past its slot
+        var interval = rendered > 0 ? (uint)Math.Round(1_000_000.0 / Math.Clamp(rendered, 20f, 1000f) * share / scale) : 0u;
 
         // DWM's refresh reading wobbles (120 / 120.002 Hz): keep the applied interval unless it moved by more than 0.3%.
         if (this.reflexApplied is { } a && a.LowLatency == (mode != ReflexMode.Off) && a.Boost == (mode == ReflexMode.Boost) &&
@@ -299,8 +302,18 @@ internal sealed unsafe partial class FramePacing : IDisposable
             this.reflexLive = wanted;
             this.log.Info($"Reflex: SetSleepMode(lowLatency={want.Item1}, boost={want.Item2}, minimumIntervalUs={want.Item3}" +
                           (scale > 1 ? $" (the driver multiplies it by {scale} with Smooth Motion, {(this.driverIntervalScale == 0 ? "expected" : "measured")})" : string.Empty) +
-                          $"{(interval > 0 ? $" = game renders at most {1_000_000.0 / ((double)interval * scale):0.##} fps; cap {this.CapDescription}" : string.Empty)}) -> {st}");
+                          $"{(interval > 0 ? $" = game renders at most {1_000_000.0 / ((double)interval * scale):0.##} fps{(lockK > 0 ? ", the refresh lock holds it to the grid" : string.Empty)}; cap {this.CapDescription}" : string.Empty)}) -> {st}");
             this.ReflexState = !wanted ? "off" : st == 0 ? "active" : $"SetSleepMode error {st}";
+        }
+
+        this.RefreshLockRefreshes = lockK;
+        this.RefreshLockActive = lockK > 0 && this.reflexLive;
+        if (this.RefreshLockActive != this.lockWasActive)
+        {
+            this.lockWasActive = this.RefreshLockActive;
+            this.log.Info(this.RefreshLockActive
+                ? $"REFRESH LOCK: on, {lockK} refresh(es) per rendered frame at {this.RefreshHz:0.###} Hz; the game's Present is steered to {this.LockTargetMs(1000.0 / this.RefreshHz):0.00} ms after the vblank"
+                : "REFRESH LOCK: off");
         }
     }
 
@@ -427,6 +440,7 @@ internal sealed unsafe partial class FramePacing : IDisposable
 
     private void AfterPresent(nint swapChain, long t0, long t1)
     {
+        this.RecordPresentPhase(t1);
         var freq = (double)Stopwatch.Frequency;
         lock (this.gate)
         {
@@ -570,19 +584,14 @@ sb.Append($" {this.OutputColor}"); // from a fresh DXGI factory on the G-Sync wo
                     swings++;
             var p50 = Pct(iv, 0.50);
             Array.Sort(ip);
-            double sum = 0;
-            foreach (var x in iv)
-                sum += x;
-            var presentFps = sum > 0 ? iv.Length * 1000.0 / sum : 0;
-            var composed = this.TakeDwmComposedFps();
-            var screen = this.Fullscreen ? string.Empty
-                : $" | screen: DWM composed {composed:0.0} fps = {(presentFps > 0 ? composed / presentFps : 0):0.00}x the game's {presentFps:0.0} presents/s, refresh {this.DwmRefreshHz:0.###} Hz{(this.GameFocused ? string.Empty : " (game not focused: Windows skips composing a covered window)")}";
+            var screen = this.Fullscreen || this.DwmRefreshHz <= 0 ? string.Empty : $" | refresh {this.DwmRefreshHz:0.###} Hz (DWM)";
             this.PresentStats = $"{1000.0 / Math.Max(0.01, Pct(iv, 0.5)):0} fps, frame time p50 {p50:0.00} ms, p99 {Pct(iv, 0.99):0.00} ms, " +
                                 $"{100.0 * swings / (iv.Length - 1):0.0}% swings";
             this.log.Info($"  PRESENT: {iv.Length} presents | interval p05={Pct(iv, 0.05):0.00} p50={p50:0.00} p95={Pct(iv, 0.95):0.00} p99={Pct(iv, 0.99):0.00} ms " +
                           $"| swings >15% {100.0 * swings / (iv.Length - 1):0.0}% | in game present (limiter + Present) p50={ip[ip.Length / 2]:0.00} p95={ip[(int)(ip.Length * 0.95)]:0.00} ms " +
                           $"| sync interval {SyncInterval(this.LimitMode)} ({LimitModeName(this.LimitMode, this.LimitFps)}) | vblank {this.vblankHz:0.0} Hz | {this.swapLine} " +
-                          $"| plugin display check on game thread max {this.displayCheckMaxMs:0.00} ms, G-Sync poll {this.VrrPollMs:0.0} ms (worker){screen}");
+                          $"| plugin display check on game thread max {this.displayCheckMaxMs:0.00} ms, G-Sync poll {this.VrrPollMs:0.0} ms (worker){screen} " +
+                          $"| {this.TakeRefreshPhaseStats()}");
             this.displayCheckMaxMs = 0;
         }
 
@@ -691,7 +700,9 @@ sb.Append($" {this.OutputColor}"); // from a fresh DXGI factory on the G-Sync wo
                                           "A Reflex frame cap with the game limit at None paces evenly.");
         else
             yield return new SettingCheck("Game frame rate limit", LimitModeName(this.LimitMode, this.LimitFps), CheckLevel.Ok,
-                                          capOn ? "Correct: the Reflex cap paces frames." : "OK.");
+                                          !capOn ? "OK."
+                                          : this.RefreshLockActive ? "Correct: the Reflex cap and the refresh lock pace frames."
+                                          : "Correct: the Reflex cap paces frames.");
 
         foreach (var c in this.GsyncChecks())
             yield return c;
@@ -772,7 +783,9 @@ sb.Append($" {this.OutputColor}"); // from a fresh DXGI factory on the G-Sync wo
     {
         this.presentHook?.Dispose();
         this.reflexLive = false;
+        this.RefreshLockActive = false;
         Thread.Sleep(50);
+        this.DisposeRefreshLock();
         this.reflex?.Dispose();
         this.reflex = null;
 

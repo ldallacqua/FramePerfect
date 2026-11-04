@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 namespace XivDlssFix;
@@ -14,8 +13,8 @@ namespace XivDlssFix;
 ///
 /// Detection: the driver loads NvPresent64.dll (its Smooth Motion runtime, logs in C:\NvPresent) into the game when
 /// Smooth Motion is on for it; the driver profile says whether it's switched on (NVIDIA app > Graphics > Program
-/// settings > Smooth Motion); Reflex's sleep status reports the frame-generation multiplier the driver used; and in
-/// borderless DWM composes about twice as many frames as the game presents.
+/// settings > Smooth Motion); and Reflex's sleep status shows the driver stretching our frame interval. PresentMon
+/// (2026-11-04) saw 120 presents/s from the game's own swap chain for 60 rendered frames.
 /// </summary>
 internal sealed unsafe partial class FramePacing
 {
@@ -24,12 +23,6 @@ internal sealed unsafe partial class FramePacing
     private string lastSmoothLine = string.Empty;
     private bool? vrrForGame;
     private string vrrWhy = "driver profile not read yet";
-
-    // DWM compositions, summed by the worker between two PRESENT lines
-    private ulong dwmLastFrame;
-    private long dwmLastTicks;
-    private double dwmFramesAcc;
-    private double dwmSecondsAcc;
 
     /// <summary>The driver's Smooth Motion runtime is loaded in the game.</summary>
     public bool SmoothMotionLoaded { get; private set; }
@@ -67,9 +60,6 @@ internal sealed unsafe partial class FramePacing
 
     /// <summary>DWM's exact refresh rate (e.g. 119.88), 0 if unknown.</summary>
     public double DwmRefreshHz { get; private set; }
-
-    /// <summary>Frames DWM composed per second over the last stats interval (windowed / borderless only).</summary>
-    public double DwmComposedFps { get; private set; }
 
     /// <summary>The refresh rate, as exact as it can be read: DWM's in a window, else the display mode's.</summary>
     public double RefreshHz
@@ -138,6 +128,14 @@ internal sealed unsafe partial class FramePacing
     {
         this.SmoothMotionLoaded = ModuleHandle(SmoothMotionDll) != 0;
         (this.vrrForGame, this.vrrWhy) = this.DecideVrr();
+        this.RefreshLockState = this.RefreshLockActive ? "on"
+            : !this.config.RefreshLock ? "turned off"
+            : this.vrrForGame != false ? "G-Sync paces frames, no lock needed"
+            : this.Fullscreen ? "exclusive full screen"
+            : this.LimitMode != 0 ? "the game's V-Sync is on: set its frame rate limit to None"
+            : this.CapNow().Rendered <= 0 ? "no frame cap"
+            : this.vblankAnchor == null ? "no vblank timing from DWM yet"
+            : "the cap isn't the refresh rate or an exact fraction of it";
 
         var p = this.GsyncProfile;
         var profile = p == null ? "not read yet"
@@ -178,7 +176,10 @@ internal sealed unsafe partial class FramePacing
         return (this.vrrForGame, this.vrrWhy); // keep the last answer while the game isn't focused
     }
 
-    /// <summary>Worker thread, about once a second: DWM's exact refresh rate and how many frames it composed.</summary>
+    /// <summary>
+    /// Worker thread, about once a second: DWM's exact refresh rate. (Its composition counter isn't usable here: it
+    /// said 1 composition/s while PresentMon saw DWM show 103 game frames/s, 2026-11-04.)
+    /// </summary>
     private void SampleDwmRate()
     {
         var info = default(TestRunner.DwmTimingInfo);
@@ -187,32 +188,7 @@ internal sealed unsafe partial class FramePacing
             return;
         if (info.RateRefreshDen != 0)
             this.DwmRefreshHz = (double)info.RateRefreshNum / info.RateRefreshDen;
-
-        var now = Stopwatch.GetTimestamp();
-        if (this.dwmLastTicks != 0 && info.CFrame >= this.dwmLastFrame)
-        {
-            var dt = (now - this.dwmLastTicks) / (double)Stopwatch.Frequency;
-            lock (this.gate)
-            {
-                this.dwmFramesAcc += info.CFrame - this.dwmLastFrame;
-                this.dwmSecondsAcc += dt;
-            }
-        }
-
-        this.dwmLastFrame = info.CFrame;
-        this.dwmLastTicks = now;
-    }
-
-    /// <summary>Called by WriteStats: DWM compositions per second since the last call.</summary>
-    private double TakeDwmComposedFps()
-    {
-        lock (this.gate)
-        {
-            var fps = this.dwmSecondsAcc > 0.5 ? this.dwmFramesAcc / this.dwmSecondsAcc : 0;
-            this.dwmFramesAcc = this.dwmSecondsAcc = 0;
-            this.DwmComposedFps = fps;
-            return fps;
-        }
+        this.SetVBlankAnchor(info.QpcVBlank, info.QpcRefreshPeriod); // the timestamps are right; the counters aren't
     }
 
     private IEnumerable<SettingCheck> SmoothMotionChecks()
@@ -227,7 +203,8 @@ internal sealed unsafe partial class FramePacing
             yield return new SettingCheck("Smooth Motion", $"on ({this.FrameMultiplier}x)", gameLimiterOk ? CheckLevel.Ok : CheckLevel.Recommend,
                                           $"The driver generates every other frame. The plugin caps the game at {rendered:0.##} fps so you see {shown:0.##} " +
                                           $"({screen}, {this.RefreshHz:0.##} Hz). " +
-                                          (gameLimiterOk ? string.Empty : "Set the game's frame rate limit to None so only this cap paces frames. ") +
+                                          (gameLimiterOk ? string.Empty
+                                              : "Set the game's frame rate limit to None: Smooth Motion ignores the game's V-Sync, and the refresh lock needs it off. ") +
                                           "Smooth Motion adds about one rendered frame of latency; turn it off in the NVIDIA app if input feels slow.");
         }
         else if (profileOn)

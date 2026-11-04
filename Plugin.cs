@@ -53,7 +53,7 @@ public sealed class Plugin : IDalamudPlugin
 
         Commands.AddHandler(CommandName, new CommandInfo(this.OnCommand)
         {
-            HelpMessage = "Opens the window. /dlssfix status | mode <dlaa|quality|balanced|performance|ultra|custom|game> | custom <33-100> | preset <default|j|k|l|m|f|game> | sharp <0-100> | lock <on|off> | reflex <off|on|boost> | cap <fps|auto|off|gsync> | test [seconds|stop] | flash <on|off> | dll [update] | reset | on | off | apply",
+            HelpMessage = "Opens the window. /dlssfix status | mode <dlaa|quality|balanced|performance|ultra|custom|game> | custom <33-100> | preset <default|j|k|l|m|f|game> | sharp <0-100> | lock <on|off> | reflex <off|on|boost> | cap <fps|auto|off|gsync> | refreshlock <on|off> | test [seconds|stop] | flash <on|off> | dll [update] | reset | on | off | apply",
         });
 
         PluginInterface.UiBuilder.Draw += this.windows.Draw;
@@ -186,6 +186,11 @@ public sealed class Plugin : IDalamudPlugin
                 this.Config.Save();
                 Chat.Print($"[DLSS Fix] frame cap: {this.Pacing.CapDescription}");
                 return;
+            case "refreshlock" when parts.Length > 1:
+                this.Config.RefreshLock = parts[1] is "on" or "1" or "true";
+                this.Config.Save();
+                Chat.Print($"[DLSS Fix] refresh lock (Fixed Refresh, borderless): {(this.Config.RefreshLock ? "on" : "off")}");
+                return;
             case "dll":
                 if (parts.Length > 1 && parts[1] == "update")
                 {
@@ -276,7 +281,7 @@ public sealed class Plugin : IDalamudPlugin
                 changed = true;
                 break;
             default:
-                Chat.PrintError("[DLSS Fix] unknown command. Use /dlssfix status | mode | custom | preset | sharp | lock | reflex | cap | test | flash | dll | reset | on | off | apply");
+                Chat.PrintError("[DLSS Fix] unknown command. Use /dlssfix status | mode | custom | preset | sharp | lock | reflex | cap | refreshlock | test | flash | dll | reset | on | off | apply");
                 return;
         }
 

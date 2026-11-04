@@ -8,6 +8,7 @@ A Dalamud plugin that locks Final Fantasy XIV's DLSS to a fixed internal resolut
 - **Sharpness slider:** AMD CAS runs on the DLSS output, before the UI. DLSS has ignored its own sharpness setting since 2.5.1.
 - **NVIDIA Reflex:** low-latency mode (On / On + Boost) and a precise driver frame cap, through NVAPI. FFXIV has no Reflex of its own.
 - **Smooth Motion aware cap:** detects NVIDIA Smooth Motion (driver frame generation) and caps the game at half the frame rate you see, so the generated frames fit the screen. "Auto" picks the right cap for G-Sync or Fixed Refresh.
+- **Refresh lock:** with Fixed Refresh in borderless, it starts every frame at the same point of the refresh, so no frame reaches Windows in the moment it picks the next one. Measured: 120.0 of 120 frames a second shown with Smooth Motion, none dropped.
 - **Correct refresh rate:** the game reads the refresh rate once at startup, from the primary monitor. The plugin gives it the rate of the monitor its window is actually on.
 - **Game settings check:** reads the game's own graphics options and tells you what to change, in the window and in chat.
 - **Debug tab:** loaded DLL versions, a per-frame flash/flicker detector and frame-pacing stats, for checking changes with numbers instead of by eye.
@@ -29,7 +30,7 @@ Works alongside RenoDX's DLSS 5 (Neural Rendering) addon. See [DLSS 5 and G-Sync
 
 **Settings tab:**
 - enable, DLSS mode, resolution lock, model preset, sharpness, chat notices
-- under "Latency & frame pacing": NVIDIA Reflex, frame cap (the frame rate you see) with "Auto cap", and "Use the refresh rate of the monitor the game is on"
+- under "Latency & frame pacing": NVIDIA Reflex, frame cap (the frame rate you see) with "Auto cap", "Keep frames in step with the refresh (Fixed Refresh)", and "Use the refresh rate of the monitor the game is on"
 - the game settings checklist and the current render resolution
 
 **Debug tab:**
@@ -53,6 +54,7 @@ Works alongside RenoDX's DLSS 5 (Neural Rendering) addon. See [DLSS 5 and G-Sync
 | `/dlssfix dll update` | download, verify and install NVIDIA's latest `nvngx_dlss.dll` (takes effect on the next game start) |
 | `/dlssfix reflex off\|on\|boost` | NVIDIA Reflex low-latency mode |
 | `/dlssfix cap 80` / `cap auto` / `cap gsync` / `cap off` | Reflex frame cap: the frame rate you see. `auto` = NVIDIA's G-Sync cap with G-Sync, the refresh rate with Fixed Refresh. `gsync` = NVIDIA's G-Sync cap for the monitor the game is on. With Smooth Motion the game is capped at half. |
+| `/dlssfix refreshlock on\|off` | refresh lock for Fixed Refresh in borderless (on by default) |
 | `/dlssfix test [seconds]` / `test stop` | unattended G-Sync test: caps 60 / 100 / 116 twice (20 s each by default) while the camera turns at a constant 29°/s. It logs one `TEST step` line per step, then restores the cap. Keep the game focused and don't touch the mouse. |
 | `/dlssfix on\|off` | enable / disable the plugin |
 | `/dlssfix apply` | rebuild the render targets now |
@@ -132,10 +134,38 @@ How the plugin knows Smooth Motion is running:
 
 - `NvPresent64.dll`, the driver's Smooth Motion runtime, is loaded in the game. The cap follows this.
 - The game's driver profile has `Smooth Motion - Enable` (`0xB0D384C0`) = on, and `Smooth Motion - Enabled APIs` (`0xB0CC0875`) allows DX11 (bit 1; not set = all APIs). The IDs come from NVIDIA Profile Inspector's `CustomSettingNames.xml`. If the profile says on but the DLL isn't loaded, the checklist says to restart the game.
-- Reflex's sleep status reports the frame-generation multiplier the driver used (`frameGen=` in the `REFLEX` line).
-- In borderless, the compositor composes about 2x as many frames as the game presents (`screen:` in the `PRESENT` line). This only works while the game window is focused: Windows skips composing a covered window.
+- Reflex's sleep status: the driver stretches the frame interval the plugin sets (`sleepInterval=` in the `REFLEX` line is 2x what was set). Its `frameGen=` multiplier stays at none with Smooth Motion.
 
-Not verified in game yet: that Smooth Motion runs with ReShade + RenoDX DLSS 5 on FFXIV's blit-model swap chain, and that the Reflex frame interval caps the rendered frames, not the shown ones.
+### Measured (2026-11-04, RTX 4090, driver 621.01, 4K borderless, 120 Hz Fixed Refresh, DLSS 5 on, ReShade + RenoDX)
+
+PresentMon, 20 s each while turning the camera:
+
+| setup | game renders | presents/s | shown/s | dropped | frames shown twice |
+|---|---|---|---|---|---|
+| 1.6.0: cap halved twice (plugin log, no capture) | 30 | – | – | – | – |
+| 1.6.1: cap fixed, game frame limit None | 60 | 120.1 | 102.9 | 343 | 341 |
+| 1.6.1, game frame limit "Main Display Refresh Rate" (V-Sync) | 60 | 120.1 | 118.5 | 32 | 32 |
+| 1.7.0 refresh lock, first target | 60 | 120.0 | 111.2 | 177 | 177 |
+| **1.7.0 refresh lock, final target** | **60** | **120.0** | **120.0** | **0** | **0** (all 8.32–8.36 ms) |
+
+- **Smooth Motion works with FFXIV's blit-model swap chain, ReShade and the DLSS 5 bridge.** It presents through the game's own swap chain, 120 presents/s for 60 rendered frames, still `Composed: Copy with GPU GDI`, and never with V-Sync (sync interval 0 even when the game's V-Sync is on).
+- **The driver applies the Reflex frame interval to the frames on screen.** The plugin first set 16667 us (60 fps rendered); the driver slept 33334 us and the game ran at 30. The plugin now divides by the stretch the driver reports.
+- **Why frames were dropped:** Windows picks the frame for each refresh about 1 ms before it. Rebuilding the refresh grid from PresentMon's screen times showed every dropped frame arrived in the last ~1.2 ms before a refresh. It was shown one refresh late, and the next frame replaced it.
+  - A free-running cap at exactly 120 drifts slowly against the refresh and can sit in that zone for minutes (20–34 drops a second).
+  - The game's V-Sync kept presents ~1 ms after the refresh, but a little jitter sent some back into the zone (a burst of 3–8 drops a second).
+- **The refresh lock fixes it:** presents now land 1.8–6.2 ms after the refresh (median 3.2), and the drop zone starts at 7.1 ms. Time from input to the screen was 14 ms (PresentMon, `MsAllInputToPhotonLatency`), against 17 ms without the lock.
+
+Recommended with Smooth Motion: Fixed Refresh, game frame rate limit **None**, plugin Reflex **On**, **Auto cap**, refresh lock on (the default).
+
+## Refresh lock
+
+Without G-Sync the screen refreshes on a fixed clock, and in borderless Windows (DWM) picks the frame for each refresh about 1 ms before it. A frame that arrives later waits a refresh and is replaced by the next one. The refresh lock keeps frames out of that last millisecond:
+
+- **Refresh timing:** from `DwmGetCompositionTimingInfo` (`qpcVBlank`, `qpcRefreshPeriod`), read once a second on a worker thread. On this machine those timestamps agreed with `IDXGIOutput::WaitForVBlank` to 0.03–0.06 ms. Its frame counters are broken (`cFrame` and `cRefresh` go up by one per call), which is why the plugin doesn't count compositions.
+- **At the start of every frame,** after the Reflex sleep, the plugin waits until the frame's slot on the refresh grid. It uses a high-resolution timer, then spins for the last 0.5 ms. Reflex's cap is set 6% short, so Reflex never holds a frame past its slot.
+- **A slow controller moves the slot** so that the game's Present returns at `(refresh period - 1.2 ms) / 2 - delay` after the vblank. The delay is 1.95 ms with Smooth Motion: PresentMon showed its presents come that long after the game's call returns. That puts the real presents in the middle of the safe part of the refresh.
+- **It runs when:** Fixed Refresh (or G-Sync off for the game), borderless, the game's frame rate limit None, and a cap that is the refresh rate or an exact fraction of it (Auto gives exactly the refresh rate).
+- **Logs:** a `REFRESH LOCK: on/off` line when it changes. The `PRESENT` line adds where the game's presents land after the vblank (p10/p50/p90), the share in the drop zone, and the lock's slot, average wait and late frames.
 
 RenoDX settings that mattered (`ReShade.ini`, `[RenoDX.DLSS5]`):
 
@@ -345,7 +375,8 @@ FFXIV's own menu didn't list 3840x2160 for full screen, though DXGI and GDI both
     - `PRESENT:` present-to-present p05/p50/p95/p99, swings, time inside the game's limiter + Present, sync interval and measured vblank rate. Every 5 s.
     - `REFLEX:` mode, cap, driver sleep status (`gsync(fsVrr)` = exclusive fullscreen G-Sync only, `cplVsync`, `iFlip`, `gameSleep`, `frameGen`) and latency. Every 5 s while Reflex or the cap is on.
     - `SMOOTHMOTION:` whether `NvPresent64.dll` is loaded, the Smooth Motion fields of the driver profile, the driver's frame-gen multiplier, whether G-Sync is in use for the game and why, and the cap (shown / rendered). Written when something changes.
-    - `PRESENT ... | screen:` frames DWM composed per second, as a multiple of the game's presents, and the exact refresh rate. 2x = Smooth Motion frames reach the screen. Borderless only, game focused.
+    - `PRESENT ... | game presents X / Y / Z ms after vblank`: p10/p50/p90 of where the game's Present returns in the refresh, the share in the last 1.2 ms before a vblank (drop zone), and the refresh lock's state (slot, average wait, late frames).
+    - `REFRESH LOCK: on/off` when the lock starts or stops.
     - `GSYNC:` live VRR state of the game's monitor (`active`, `requested`, `possible`, `displayInVrrMode`, `indicator`), whether the game window has focus, and the G-Sync fields of the game's driver profile. Written when something changes.
     - `TEST step N/M cap=X`, during `/dlssfix test`: focus %, G-Sync active %, DLSS 5 state, then three interval distributions with p05–p99, swings and a histogram:
       - `game frames`: framework ticks
@@ -361,7 +392,7 @@ FFXIV's own menu didn't list 3840x2160 for full screen, though DXGI and GDI both
 Wanted most with DLSS 5, since DLSS 5 takes the game down to ~75–90 fps at 4K.
 
 - **NVIDIA DLSS Frame Generation can't be added in-process.** Streamline's DLSS-G needs DirectX 12, and FFXIV is DX11. Same for AMD's FSR 3 frame generation: the FidelityFX SDK ships DX12/Vulkan backends only.
-- **Available now: NVIDIA Smooth Motion.** It is driver-level frame generation for DX11/DX12 games, on RTX 40 since driver 590.26. The plugin detects it and halves the cap (see [Smooth Motion](#smooth-motion)). Still to measure: frame pacing with Fixed Refresh (60 rendered → 120 shown), UI ghosting (Smooth Motion interpolates the final image, UI included), and whether it works with ReShade/RenoDX hooking DXGI.
+- **Available now: NVIDIA Smooth Motion.** It is driver-level frame generation for DX11/DX12 games, on RTX 40 since driver 590.26. It works with ReShade + RenoDX, and with the plugin's cap and refresh lock it shows 120 of 120 frames a second at Fixed Refresh (see [Smooth Motion](#smooth-motion)). Still to look at: UI ghosting (Smooth Motion interpolates the final image, UI included).
 - **In-plugin option (big project):** the plugin already has everything frame generation needs from the DLSS evaluate call: color before the UI, depth, motion vectors, jitter and the render sub-rectangle. A real implementation would have to:
   - share those textures with a D3D12 device
   - run FSR 3.1 / XeFG frame interpolation there

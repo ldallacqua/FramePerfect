@@ -298,6 +298,22 @@ internal sealed class ConfigWindow : Window
         if (p.CapNow().Shown > 0 || p.FrameMultiplier > 1)
             ImGui.TextDisabled($"Cap: {p.CapDescription}");
 
+        var rlock = cfg.RefreshLock;
+        if (ImGui.Checkbox("Keep frames in step with the refresh (Fixed Refresh)", ref rlock))
+        {
+            cfg.RefreshLock = rlock;
+            cfg.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Without G-Sync, Windows picks the frame for each refresh about 1 ms before it. A frame that arrives\n" +
+                             "in that millisecond is shown a refresh late and the next one replaces it: a dropped frame (stutter).\n" +
+                             "This starts every frame at the same point of the refresh, so frames arrive well before that moment.\n" +
+                             "Used with Fixed Refresh in borderless when the cap is the refresh rate or an exact fraction (Auto).");
+
+        ImGui.SameLine();
+        ImGui.TextDisabled(p.RefreshLockState);
+
         var fix = cfg.FixRefreshRate;
         if (ImGui.Checkbox("Use the refresh rate of the monitor the game is on", ref fix))
         {
@@ -386,7 +402,7 @@ internal sealed class ConfigWindow : Window
         ImGui.TextWrapped($"G-Sync: {(p.GsyncSummary.Length > 0 ? p.GsyncSummary : "?")}");
         ImGui.TextWrapped($"Smooth Motion: {(p.SmoothMotionLoaded ? "running (NvPresent64.dll loaded)" : "not running")}, driver frame-gen multiplier " +
                           $"{(p.DriverFgMultiplier > 1 ? $"{p.DriverFgMultiplier}x" : "none")} | G-Sync for the game: {(p.VrrForGame is { } v ? v ? "yes" : "no" : "?")} | " +
-                          $"screen: DWM composed {p.DwmComposedFps:0.0} fps at {p.DwmRefreshHz:0.###} Hz | cap {p.CapDescription}");
+                          $"refresh {p.DwmRefreshHz:0.###} Hz (DWM) | cap {p.CapDescription}");
 
         ImGui.Separator();
         ImGui.TextWrapped($"Log: {this.plugin.Log.FilePath}");
