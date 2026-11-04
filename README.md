@@ -222,7 +222,16 @@ After switching Monitor Technology from Fixed Refresh back to G-SYNC, there was 
   | 1.4.0, any state | 2.6–8.5% | 9.2–15 ms |
 
   With G-Sync live, each of those frames is a refresh-rate dip. 1.4.1 polls on a worker thread. A test showed a slow NVAPI call on one thread doesn't block NVAPI calls on another. The `PRESENT` line now also prints the plugin's own per-second cost on the game thread.
-- **Still to retest with 1.4.1:** G-Sync with DLSS 5 off, then on. Compare the flicker and the `PRESENT` swings against the 0% baseline.
+- **Retest with 1.4.1 (13:43–13:45, G-Sync live, 116 cap):** "basically solved", with an occasional flicker still seen.
+
+  | | `PRESENT` swings >15% | p99 | plugin game-thread cost per second |
+  |---|---|---|---|
+  | 1.4.0, DLSS 5 off | 3.2–7.2% | 11.3–14.9 ms | 5–10 ms |
+  | 1.4.1, DLSS 5 off | 1.4–2.2% | 9.3–9.6 ms | 0.07–0.18 ms |
+  | 1.4.1, DLSS 5 on | 0.2–2.1% | 9.4–9.7 ms | 0.07–0.09 ms |
+
+  The G-Sync poll takes 4–9 ms, now on a worker thread.
+- **The leftover flicker:** in two of the three DLSS 5 windows, frames ran at p50 8.82–8.92 ms (~113 fps), and Reflex latency (sim start → GPU done) rose from ~5 to ~23 ms. So DLSS 5 couldn't hold 116 there; the GPU was the bottleneck and frames queued. G-Sync follows that small drift. A cap DLSS 5 always holds (e.g. 110) should remove it and cut that latency. The earlier 100 fps test doesn't count: it ran on 1.4.0, with the hitch.
 - **The display:** a **Samsung QN90D** (EDID `SAM7572`, 43"), a VA mini-LED TV. VRR flicker on this series is widely reported by owners and tied to **local dimming** ([Samsung community](https://eu.community.samsung.com/t5/tv/qn90d-50-inch-possible-qa-fault-problem/m-p/11711787/highlight/true), [QN90B thread](https://eu.community.samsung.com/t5/tv/qn90b-vrr-flicker-after-update-1403-6/td-p/6329585)). If 1.4.1 still flickers with flat presents, try Local Dimming Low or Off in Game Mode and the latest firmware. Otherwise, Fixed Refresh for the game is the known flicker-free setting.
 
 ## Findings (2026-11-04 test rounds)
