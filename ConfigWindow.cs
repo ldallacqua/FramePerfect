@@ -156,6 +156,8 @@ internal sealed class ConfigWindow : Window
             ctl.OnSettingsChanged();
         }
 
+        this.DrawPacing();
+
         ImGui.Separator();
         if (!ctl.HooksOk)
             ImGui.TextColored(Red, "Game functions not found (new game patch?). The plugin can't work. Details in the Debug tab.");
@@ -187,6 +189,78 @@ internal sealed class ConfigWindow : Window
                 "monitor's brightness changes with the refresh rate. Fix it for this game only:\n" +
                 "NVIDIA Control Panel > Manage 3D settings > Program Settings > ffxiv_dx11.exe >\n" +
                 "Monitor Technology: Fixed Refresh. Other games keep G-Sync.");
+        }
+    }
+
+    private static readonly (ReflexMode Mode, string Label)[] ReflexModes =
+    {
+        (ReflexMode.Off, "Off"),
+        (ReflexMode.On, "On"),
+        (ReflexMode.Boost, "On + Boost"),
+    };
+
+    private void DrawPacing()
+    {
+        var cfg = this.plugin.Config;
+        var p = this.plugin.Pacing;
+
+        ImGui.Separator();
+        ImGui.TextUnformatted("Latency & frame pacing");
+
+        var reflexLabel = Array.Find(ReflexModes, m => m.Mode == cfg.Reflex).Label ?? cfg.Reflex.ToString();
+        if (ImGui.BeginCombo("NVIDIA Reflex", reflexLabel))
+        {
+            foreach (var (mode, label) in ReflexModes)
+            {
+                if (ImGui.Selectable(label, mode == cfg.Reflex))
+                {
+                    cfg.Reflex = mode;
+                    cfg.Save();
+                }
+            }
+
+            ImGui.EndCombo();
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Lowers input latency: the driver keeps the GPU queue short and the plugin calls\nNVIDIA's sleep at the start of every frame. Boost also keeps GPU clocks up.");
+
+        var cap = cfg.FrameCapFps;
+        if (ImGui.SliderFloat("Frame cap (Reflex)", ref cap, 0f, 240f, cap < 20f ? "off" : "%.0f fps"))
+            cfg.FrameCapFps = cap < 20f ? 0f : MathF.Round(cap);
+        if (ImGui.IsItemDeactivatedAfterEdit())
+            cfg.Save();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("A precise driver frame cap. The game's own limiter is V-Sync in whole refresh steps\n(16.7 / 33.3 ms), so set the game's frame rate limit to None when you use this.\nWith G-Sync: a few fps below the refresh rate, or a rate DLSS 5 can always hold.");
+
+        if (p.GsyncCap > 0)
+        {
+            ImGui.SameLine();
+            if (ImGui.SmallButton($"G-Sync ({p.GsyncCap})"))
+            {
+                cfg.FrameCapFps = p.GsyncCap;
+                cfg.Save();
+            }
+
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip($"NVIDIA's G-Sync cap for a {p.WindowHz} Hz monitor: keeps frames inside the G-Sync range.");
+        }
+
+        var fix = cfg.FixRefreshRate;
+        if (ImGui.Checkbox("Use the refresh rate of the monitor the game is on", ref fix))
+        {
+            cfg.FixRefreshRate = fix;
+            cfg.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("The game reads the refresh rate once at startup, from the primary monitor.\nIts frame limiter and dynamic resolution use that number, even when the window is on another monitor.");
+
+        if (p.WindowHz > 0)
+        {
+            var reflex = cfg.Reflex == ReflexMode.Off && cfg.FrameCapFps <= 0 ? "Reflex off" : $"Reflex {p.ReflexState}";
+            ImGui.TextDisabled($"Monitor: {p.WindowHz} Hz ({p.WindowMonitor}) | game uses {p.GameHzNow} Hz | {reflex}" +
+                               (p.PresentStats.Length > 0 ? $" | {p.PresentStats}" : string.Empty));
         }
     }
 
@@ -242,6 +316,23 @@ internal sealed class ConfigWindow : Window
         ImGui.TextWrapped($"NR per RenoDX: runtime {rt.NrRuntimeVersion} | state {rt.NrState} | {rt.NrCostMs} ms GPU | flicker {rt.NrFlickerStops}");
 
         ImGui.Separator();
+        var p = this.plugin.Pacing;
+        if (!p.HookOk)
+            ImGui.TextColored(Orange, "Present hook not found (game patch?): no present stats, Reflex without present markers.");
+        ImGui.TextWrapped($"Monitors ({p.MonitorCount}): {p.MonitorList}");
+        ImGui.TextWrapped($"Window on {p.WindowMonitor} {p.WindowHz} Hz | primary {p.PrimaryMonitor} {p.PrimaryHz} Hz | " +
+                          $"game refresh value {p.GameHzNow} Hz (read at startup: {p.GameHzOriginal} Hz)");
+        ImGui.TextWrapped($"Game limiter: {FramePacing.LimitModeName(p.LimitMode, p.LimitFps)} (Present sync interval {FramePacing.SyncInterval(p.LimitMode)})" +
+                          (p.Fullscreen ? " | exclusive fullscreen flag set" : string.Empty));
+        ImGui.TextWrapped($"Swap chain: {(p.SwapChainInfo.Length > 0 ? p.SwapChainInfo : "?")}");
+        ImGui.TextWrapped($"Presents: {(p.PresentStats.Length > 0 ? p.PresentStats : "?")}");
+        var ss = p.LastSleepStatus;
+        ImGui.TextWrapped($"Reflex: {p.ReflexState}" +
+                          (ss.HasValue ? $" | low latency {ss.Value.LowLatency}, G-Sync (driver) {ss.Value.FullscreenVrr}, control panel V-Sync {ss.Value.CplVsyncOn}, " +
+                                         $"iFlip {ss.Value.FullscreenIFlip}, game sleep {ss.Value.UseGameSleep}" : string.Empty) +
+                          (p.ReflexLatency.Length > 0 ? $" | latency {p.ReflexLatency}" : string.Empty));
+
+        ImGui.Separator();
         ImGui.TextWrapped($"Log: {this.plugin.Log.FilePath}");
         if (ImGui.Button("Open log folder"))
         {
@@ -253,7 +344,7 @@ internal sealed class ConfigWindow : Window
 
     private void DrawGameSettings()
     {
-        var checks = GameSettings.Evaluate(GameSettings.Read(), this.plugin.Config);
+        var checks = GameSettings.Evaluate(GameSettings.Read(), this.plugin.Config, this.plugin.Pacing);
         if (checks.Count == 0)
             return;
 

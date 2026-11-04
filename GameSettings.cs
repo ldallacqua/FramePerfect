@@ -56,7 +56,7 @@ internal static unsafe class GameSettings
         _ => $"? ({v})",
     };
 
-    public static List<SettingCheck> Evaluate(Snapshot s, Configuration config)
+    public static List<SettingCheck> Evaluate(Snapshot s, Configuration config, FramePacing? pacing = null)
     {
         var list = new List<SettingCheck>();
         if (!s.Valid)
@@ -84,6 +84,9 @@ internal static unsafe class GameSettings
             ? new SettingCheck("Radial Blur", "on", CheckLevel.Recommend,
                                $"Recommended off: {EffectsPath} > Radial Blur. It blurs the image when the camera moves.")
             : new SettingCheck("Radial Blur", "off", CheckLevel.Ok, "Correct."));
+
+        if (pacing != null)
+            list.AddRange(pacing.Checks());
 
         return list;
     }
@@ -124,7 +127,12 @@ internal sealed class GameSettingsNotifier
         if (!s.Valid)
             return;
 
-        var key = $"{s.Upscale}|{s.RadialBlur}|{cfg.Mode}|{cfg.LockResolution}";
+        var pacing = this.plugin.Pacing;
+        var pacingIssues = new List<SettingCheck>();
+        foreach (var c in pacing.Checks())
+            if (c.Level is CheckLevel.Change or CheckLevel.Recommend || (c.Option.StartsWith("Refresh") && c.Advice.StartsWith("Corrected")))
+                pacingIssues.Add(c);
+        var key = $"{s.Upscale}|{s.RadialBlur}|{cfg.Mode}|{cfg.LockResolution}|{string.Join(";", pacingIssues.ConvertAll(c => c.Option + c.Current + c.Level))}";
         if (key == this.printed)
             return;
         if (key != this.pending)
@@ -154,6 +162,9 @@ internal sealed class GameSettingsNotifier
 
         if (s.RadialBlur)
             Plugin.Chat.Print($"[DLSS Fix] Recommended: turn off {GameSettings.EffectsPath} > Radial Blur (it blurs the image when the camera moves).");
+
+        foreach (var c in pacingIssues)
+            Plugin.Chat.Print($"[DLSS Fix] {GameSettings.LevelTag(c.Level)} {c.Option} = {c.Current}: {c.Advice}");
 
         this.plugin.Log.Info($"chat notice: upscaling={GameSettings.UpscaleName(s.Upscale)} threshold={GameSettings.ThresholdName(s.Threshold)} radialBlur={s.RadialBlur}");
     }

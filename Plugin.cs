@@ -19,6 +19,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IChatGui Chat { get; private set; } = null!;
     [PluginService] internal static IPluginLog PluginLog { get; private set; } = null!;
     [PluginService] internal static IClientState ClientState { get; private set; } = null!;
+    [PluginService] internal static IGameConfig GameConfig { get; private set; } = null!;
 
     private readonly WindowSystem windows = new("XivDlssFix");
     private readonly ConfigWindow configWindow;
@@ -30,11 +31,15 @@ public sealed class Plugin : IDalamudPlugin
 
     internal DlssController Controller { get; }
 
+    internal FramePacing Pacing { get; }
+
     public Plugin()
     {
         this.Config = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
         this.Log = new FileLog(PluginInterface.GetPluginConfigDirectory());
         this.Controller = new DlssController(this.Config, this.Log);
+        this.Pacing = new FramePacing(this.Config, this.Log);
+        this.Controller.Pacing = this.Pacing;
         this.notifier = new GameSettingsNotifier(this);
 
         this.configWindow = new ConfigWindow(this);
@@ -42,7 +47,7 @@ public sealed class Plugin : IDalamudPlugin
 
         Commands.AddHandler(CommandName, new CommandInfo(this.OnCommand)
         {
-            HelpMessage = "Opens the window. /dlssfix status | mode <dlaa|quality|balanced|performance|ultra|custom|game> | custom <33-100> | preset <default|j|k|l|m|f|game> | sharp <0-100> | lock <on|off> | flash <on|off> | reset | on | off | apply",
+            HelpMessage = "Opens the window. /dlssfix status | mode <dlaa|quality|balanced|performance|ultra|custom|game> | custom <33-100> | preset <default|j|k|l|m|f|game> | sharp <0-100> | lock <on|off> | reflex <off|on|boost> | cap <fps|off|gsync> | flash <on|off> | reset | on | off | apply",
         });
 
         PluginInterface.UiBuilder.Draw += this.windows.Draw;
@@ -57,6 +62,8 @@ public sealed class Plugin : IDalamudPlugin
     {
         try
         {
+            this.Pacing.FrameStart(); // Reflex sleep point: before the game samples input this frame
+            this.Pacing.Update();
             this.Controller.Update();
             this.notifier.Tick();
         }
@@ -89,7 +96,10 @@ public sealed class Plugin : IDalamudPlugin
                 var probe = this.Controller.Probe;
                 var flash = $"[DLSS Fix] flashes detected: {probe.TotalFlashes} (last: {probe.LastFlash}) | detector {(this.Config.FlashDetector ? probe.State : "off")}";
                 Chat.Print(flash);
-                foreach (var c in GameSettings.Evaluate(GameSettings.Read(), this.Config))
+                Chat.Print($"[DLSS Fix] monitor: {this.Pacing.WindowMonitor} {this.Pacing.WindowHz} Hz | game uses {this.Pacing.GameHzNow} Hz | " +
+                           $"limiter: {FramePacing.LimitModeName(this.Pacing.LimitMode, this.Pacing.LimitFps)} | Reflex: {this.Config.Reflex} ({this.Pacing.ReflexState}), " +
+                           $"cap {(this.Config.FrameCapFps > 0 ? $"{this.Config.FrameCapFps:0.#} fps" : "off")} | {this.Pacing.PresentStats}");
+                foreach (var c in GameSettings.Evaluate(GameSettings.Read(), this.Config, this.Pacing))
                     if (c.Level != CheckLevel.Ok)
                         Chat.Print($"[DLSS Fix] {GameSettings.LevelTag(c.Level)} {c.Option} = {c.Current}: {c.Advice}");
                 this.Log.Info($"/dlssfix status: {msg} || {dll} || {flash}");
@@ -109,6 +119,46 @@ public sealed class Plugin : IDalamudPlugin
                 this.Config.Save();
                 this.Controller.OnSettingsChanged(rebuild: false);
                 Chat.Print($"[DLSS Fix] sharpness: {this.Config.Sharpness * 100:0}%");
+                return;
+            case "reflex" when parts.Length > 1:
+                ReflexMode? rm = parts[1] switch
+                {
+                    "off" or "0" => ReflexMode.Off,
+                    "on" or "1" => ReflexMode.On,
+                    "boost" or "2" => ReflexMode.Boost,
+                    _ => null,
+                };
+                if (rm == null)
+                {
+                    Chat.PrintError("[DLSS Fix] use /dlssfix reflex off|on|boost");
+                    return;
+                }
+
+                this.Config.Reflex = rm.Value;
+                this.Config.Save();
+                Chat.Print($"[DLSS Fix] Reflex: {rm.Value}");
+                return;
+            case "cap" when parts.Length > 1:
+                if (parts[1] is "off" or "0")
+                {
+                    this.Config.FrameCapFps = 0;
+                }
+                else if (parts[1] == "gsync" && this.Pacing.GsyncCap > 0)
+                {
+                    this.Config.FrameCapFps = this.Pacing.GsyncCap;
+                }
+                else if (float.TryParse(parts[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var capFps))
+                {
+                    this.Config.FrameCapFps = Math.Clamp(capFps, 20f, 1000f);
+                }
+                else
+                {
+                    Chat.PrintError("[DLSS Fix] use /dlssfix cap <fps>|off|gsync");
+                    return;
+                }
+
+                this.Config.Save();
+                Chat.Print($"[DLSS Fix] frame cap: {(this.Config.FrameCapFps > 0 ? $"{this.Config.FrameCapFps:0.#} fps" : "off")}");
                 return;
             case "on":
                 this.Config.Enabled = true;
@@ -182,7 +232,7 @@ public sealed class Plugin : IDalamudPlugin
                 changed = true;
                 break;
             default:
-                Chat.PrintError("[DLSS Fix] unknown command. Use /dlssfix status | mode | custom | preset | sharp | lock | flash | reset | on | off | apply");
+                Chat.PrintError("[DLSS Fix] unknown command. Use /dlssfix status | mode | custom | preset | sharp | lock | reflex | cap | flash | reset | on | off | apply");
                 return;
         }
 
@@ -202,6 +252,7 @@ public sealed class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.OpenMainUi -= this.ToggleWindow;
         Commands.RemoveHandler(CommandName);
         this.windows.RemoveAllWindows();
+        this.Pacing.Dispose();
         this.Controller.Dispose();
         this.Log.Dispose();
     }

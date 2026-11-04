@@ -1,6 +1,6 @@
 <Project Sdk="Dalamud.NET.Sdk/15.0.0">
   <PropertyGroup>
-    <Version>1.1.0.0</Version>
+    <Version>1.2.0.0</Version>
     <Description>Locks FFXIV's DLSS to a fixed internal resolution (no dynamic resolution).</Description>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Nullable>enable</Nullable>

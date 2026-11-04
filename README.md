@@ -5,6 +5,8 @@ A Dalamud plugin that locks Final Fantasy XIV's DLSS to a fixed internal resolut
 - **Fixed DLSS resolution:** DLAA, Quality, Balanced, Performance, Ultra Performance, or a custom percentage.
 - **Model preset:** the game hard-codes the old CNN preset C. The plugin defaults to the preset NVIDIA recommends for the loaded `nvngx_dlss.dll`, or you can pick J, K, L, M or F.
 - **Sharpness slider:** AMD CAS runs on the DLSS output, before the UI. DLSS has ignored its own sharpness setting since 2.5.1.
+- **NVIDIA Reflex:** low-latency mode (On / On + Boost) and a precise driver frame cap, through NVAPI. FFXIV has no Reflex of its own.
+- **Correct refresh rate:** the game reads the refresh rate once at startup, from the primary monitor. The plugin gives it the rate of the monitor its window is actually on.
 - **Game settings check:** reads the game's own graphics options and tells you what to change, in the window and in chat.
 - **Debug tab:** loaded DLL versions, a per-frame flash/flicker detector and frame-pacing stats, for checking changes with numbers instead of by eye.
 
@@ -21,9 +23,16 @@ Works alongside RenoDX's DLSS 5 (Neural Rendering) addon. See [DLSS 5 and G-Sync
 
 `/dlssfix` opens it.
 
-**Settings tab:** enable, DLSS mode, resolution lock, model preset, sharpness, chat notices. It also has the game settings checklist and the current render resolution.
+**Settings tab:**
+- enable, DLSS mode, resolution lock, model preset, sharpness, chat notices
+- under "Latency & frame pacing": NVIDIA Reflex, frame cap (with a one-click G-Sync cap for your monitor), and "Use the refresh rate of the monitor the game is on"
+- the game settings checklist and the current render resolution
 
-**Debug tab:** flash detector, "Reapply now" (rebuilds the render targets; the screen blinks once), "Reset DLSS history", RTM range, evaluate rate, loaded DLLs, RenoDX DLSS 5 state, and the log path.
+**Debug tab:**
+- flash detector, "Reapply now" (rebuilds the render targets; the screen blinks once), "Reset DLSS history"
+- RTM range, evaluate rate, loaded DLLs, RenoDX DLSS 5 state
+- monitors and refresh rates, the game's limiter mode, swap chain and presentation mode (composed vs independent flip), present pacing, Reflex status (including whether the driver sees G-Sync) and latency
+- the log path
 
 ## Commands
 
@@ -36,6 +45,8 @@ Works alongside RenoDX's DLSS 5 (Neural Rendering) addon. See [DLSS 5 and G-Sync
 | `/dlssfix preset default\|k\|j\|m\|l\|f\|game` | DLSS model preset |
 | `/dlssfix sharp 35` | CAS sharpness in % (0 = off) |
 | `/dlssfix lock on\|off` | resolution lock |
+| `/dlssfix reflex off\|on\|boost` | NVIDIA Reflex low-latency mode |
+| `/dlssfix cap 80` / `cap gsync` / `cap off` | Reflex frame cap in fps (`gsync` = NVIDIA's G-Sync cap for the monitor the game is on) |
 | `/dlssfix on\|off` | enable / disable the plugin |
 | `/dlssfix apply` | rebuild the render targets now |
 | `/dlssfix reset` | reset DLSS / DLSS 5 history on the next frame (diagnostic) |
@@ -67,6 +78,8 @@ Reverse engineered from `ffxiv_dx11.exe` 2026.10.16. Offsets are relative to the
 | controller (`+0x2DA5B0`, fields `RTM+0x700..0x714`) | steps the height by 9/18 lines between min and max from GPU time, **only while the camera moves** |
 | `DlssManager::CreateFeature` (`+0x374CB0`) | creates the DLSS feature with preset C, flags `MVLowRes\|DepthInverted` |
 | DLSS evaluate args | `+0x08` output texture, `+0x30` motion vector scale, `+0x48` render sub-rectangle, `+0x50` reset flag |
+| `Device+0x9F0` ("FrameRate") | refresh rate, written **once** at device creation (`+0x220C90`): `GetDeviceCaps(GetDC(hwnd), VREFRESH)`, 59 or <10 → 60. Never updated afterwards. |
+| `Kernel::SwapChain::Present` (`+0x21B600`) | the frame limiter. `Device+0xA4` = Present sync interval (0 none, 1 V-Sync, 2–4 every Nth refresh). Mode 1 adds a `Sleep` cap to `Device+0xAC` fps. Flags always 0. |
 
 The fix:
 
@@ -97,6 +110,51 @@ RenoDX settings that mattered (`ReShade.ini`, `[RenoDX.DLSS5]`):
 - `NRLinearUnitNits` only applies to linear sources. `NRFeedMode=2` falls back to v1, because FFXIV passes no exposure texture.
 - Keep `NRNormTrace=0` and `NREditTrace=0` unless you're debugging; the edit trace writes a CSV every frame.
 
+## Frame pacing, refresh rate and Reflex
+
+### What the game does (`ffxiv_dx11.exe` 2026.10.16)
+
+FFXIV has no V-Sync option because **its frame-rate limit is V-Sync**. `Kernel::SwapChain::Present` (`+0x21B600`) calls `IDXGISwapChain::Present(syncInterval, 0)`, and the sync interval comes straight from the limit setting (`Device+0xA4`):
+
+| `Device+0xA4` | Present sync interval | effect |
+|---|---|---|
+| 0 | 0 | no limit, no V-Sync |
+| 1 | 1 | V-Sync on every refresh, plus a `Sleep` cap to `Device+0xAC` fps when the refresh rate is higher (1 ms granularity, 1–2 ms slack) |
+| 2 / 3 / 4 | 2 / 3 / 4 | V-Sync every 2nd / 3rd / 4th refresh |
+
+- **Why the limiter quantizes:** a frame can only last a whole number of refreshes. At 1/2 of 120 Hz, a frame that misses 16.7 ms waits until 33.3 ms. At 1/1 with DLSS 5 the frames alternated 8.75 / 17.5 ms. Both match what the test logs showed.
+- **Tearing:** the game never passes `DXGI_PRESENT_ALLOW_TEARING`.
+- **Where the refresh rate comes from:** the game reads it once, when the device is created: `GetDeviceCaps(GetDC(hwnd), VREFRESH)` into `Device+0x9F0`. A screen DC reports the **primary** monitor. The value is never refreshed, not when the window moves to another monitor and not when the refresh rate changes.
+- **What uses that value:** the limiter (in windowed / borderless) and the dynamic-resolution FPS target (`+0x2DA8FD`).
+- **The two-monitor stutter:** on a setup with mixed refresh rates and the game off the primary monitor, both of those work against the wrong refresh rate.
+- **Exclusive fullscreen:** the limiter uses the selected display mode's refresh rate instead.
+
+### What the plugin does
+
+- **"Use the refresh rate of the monitor the game is on"** (on by default) checks once a second which monitor the window is on, and writes that monitor's refresh rate to `Device+0x9F0` when it differs. Turning it off restores the value the game read. The checklist flags a mismatch.
+- **NVIDIA Reflex** via NVAPI (`nvapi64.dll`, D3D11). It calls:
+  - `NvAPI_D3D_SetSleepMode` when the settings change
+  - `NvAPI_D3D_Sleep` plus a `SIMULATION_START` marker at the start of every framework tick, before the game samples input
+  - `PRESENT_START` / `PRESENT_END` markers around the game's Present
+- **Frame cap** (`minimumIntervalUs`): an evenly spaced driver cap. The "G-Sync" button sets NVIDIA's own formula, `3600·Hz / (Hz + 3600)` (116 fps at 120 Hz). With a cap, set the game's frame rate limit to None, or the game's V-Sync steps still apply; the checklist recommends it.
+- **Diagnostics:**
+  - which monitor the game is on and every monitor's refresh rate
+  - the game's limiter mode
+  - swap chain model and flags, and the presentation mode: COMPOSED means DWM copies the frame, INDEPENDENT FLIP is direct
+  - present-to-present pacing, and time spent inside the game's limiter + Present
+  - Reflex sleep status: `bFsVrr` says whether the driver has G-Sync engaged, plus control-panel V-Sync and iFlip
+  - Reflex latency (simulation start → GPU done)
+
+### Testing G-Sync again with DLSS 5
+
+1. Game: frame rate limit **None**. Plugin: Reflex **On**, frame cap at a rate DLSS 5 always holds (e.g. 80), or the G-Sync cap if it can.
+2. NVIDIA Control Panel: `ffxiv_dx11.exe` Monitor Technology back to **G-SYNC**, V-Sync **On** (driver).
+3. Move the camera with DLSS 5 on and compare the log lines:
+   - `PRESENT`: p05–p99 should be flat and swings near 0%.
+   - `REFLEX`: `gsync(fsVrr)=True`.
+   - `SWAPCHAIN`: the presentation mode.
+4. If it still flickers with flat presents, the variation is after Present, in the DLSS 5 D3D11 → D3D12 bridge or in DWM. Fixed Refresh stays the answer.
+
 ## Findings (2026-11-04 test rounds)
 
 - **Lock works:** `DLSS in=2227x1253 -> 3840x2160 STABLE` while zooming. Without it, Balanced at 4K moved between 1080 and 2160 lines.
@@ -116,6 +174,13 @@ RenoDX settings that mattered (`ReShade.ini`, `[RenoDX.DLSS5]`):
     - `HITCH:` long frames
     - `LOCAL flicker:` reversing tiles in a 64×36 grid, per 1000 tile-frames
     - `FRAMES (pacing seen by G-Sync):` frame-time p05/p50/p95/p99 and % of frames that swing >15%
+  - Frame pacing:
+    - `DISPLAY:` monitors, the game's refresh value and limiter mode, and game config `Fps` / `FPSInActive` / `ScreenMode`. Written when something changes.
+    - `refresh rate: game value X Hz -> Y Hz` when the plugin corrects it
+    - `SWAPCHAIN:` swap effect, buffers, flags, output and presentation mode. Written when something changes.
+    - `PRESENT:` present-to-present p05/p50/p95/p99, swings, time inside the game's limiter + Present, sync interval and measured vblank rate. Every 5 s.
+    - `REFLEX:` mode, cap, driver sleep status (`gsync(fsVrr)`, `cplVsync`, `iFlip`, `gameSleep`) and latency. Every 5 s while Reflex or the cap is on.
+    - `present thread id=..., framework thread id=...` once, to show whether presenting runs on its own thread
 - DLSS 5 (RenoDX): `ReShade.log` in the game folder (`DLSS5 Generic`, `NR-VERDICT`, `frame contract`). The plugin reads it incrementally on a worker thread for the Debug tab.
 
 ## Next steps
@@ -133,31 +198,19 @@ Wanted most with DLSS 5, since DLSS 5 takes the game down to ~75–90 fps at 4K.
   
   This is what OptiScaler does for DX12 games; its OptiFG is DX12-only today. Investigate only if Smooth Motion falls short.
 
-### Refresh rate, frame limiter and G-Sync
+### Refresh rate, frame limiter and Reflex: what's left
 
-FFXIV has no V-Sync option, and in borderless mode it seems to decide the refresh rate on its own. With two monitors at different refresh rates, the game rendered on one monitor but paced itself to the other monitor's refresh rate, which caused heavy stutter. The game's frame-rate limit options are fractions of the "main display" refresh rate (full, 1/2, 1/4). That suggests it reads the Windows *primary* display, not the monitor the window is on. To investigate:
+The investigation and the first fix are done (see [Frame pacing, refresh rate and Reflex](#frame-pacing-refresh-rate-and-reflex)). Still open:
 
-- Find how the limiter gets its refresh rate: `EnumDisplaySettings(NULL)` / primary `DXGI_OUTPUT` vs. `IDXGISwapChain::GetContainingOutput`. Also find how it waits: sleep granularity, `WaitForVBlank`, or Present sync interval. That last one explains the 16.7/33.3 ms quantization.
-- Log the real Present path:
-  - sync interval and flags
-  - swap effect (flip model vs. blit)
-  - `DXGI_PRESENT_ALLOW_TEARING`
-  - whether borderless gets Independent Flip (needed for clean G-Sync in a window)
-- Possible plugin features:
-  - pace against the refresh rate of the monitor the window is actually on
-  - replace the tick-based limiter with a precise one (waitable timer + short spin)
-  - warn when the game and the primary monitor disagree
-- Then retest DLSS 5 with G-Sync: with steady pacing and a cap below what DLSS 5 can sustain, G-Sync might work without needing Fixed Refresh.
+- **Verify in-game:**
+  - the `DISPLAY` line against the real monitors, including the game's config `Fps` values ↔ `Device+0xA4` (inferred from code, not seen at runtime yet)
+  - the present thread vs. the framework thread, which decides how Reflex frame IDs pair up
+  - whether Reflex's sleep works through ReShade + the RenoDX DLSS 5 bridge
+- **G-Sync + DLSS 5 retest** with a flat Reflex cap, following the steps above.
+- **Possibly:** let the plugin bypass the game's V-Sync limiter while the Reflex cap is on (pass sync interval 0 to the original Present), so players don't have to change the game option.
+- **Possibly:** `SIMULATION_END` / `RENDERSUBMIT_*` markers from game hooks, for complete latency reports in the NVIDIA overlay.
 
-### NVIDIA Reflex
-
-FFXIV has no Reflex support. Reflex works on DX11 through NVAPI, and a plugin can drive it:
-
-- `NvAPI_D3D_SetSleepMode`, which also gives a precise driver frame cap (`minimumIntervalUs`) and could fix the limiter problem above
-- `NvAPI_D3D_Sleep` once per frame before input sampling, via the Framework update hook
-- `NvAPI_D3D_SetLatencyMarker` for simulation / render-submit / present markers, so the NVIDIA overlay and FrameView can measure latency
-
-Reflex is also a prerequisite for frame generation feeling responsive, so this comes before or with any frame generation work.
+Reflex is also a prerequisite for frame generation feeling responsive.
 
 ## Revert
 

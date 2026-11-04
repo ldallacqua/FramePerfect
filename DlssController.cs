@@ -127,6 +127,9 @@ internal sealed unsafe class DlssController : IDisposable
 
     public RuntimeInfo Runtime { get; }
 
+    /// <summary>Set by the plugin; its present and Reflex lines are written with the periodic stats.</summary>
+    public FramePacing? Pacing { get; set; }
+
     public string SharpenState => this.sharpener.State;
 
     public FrameProbe Probe => this.probe;
@@ -681,6 +684,8 @@ internal sealed unsafe class DlssController : IDisposable
             this.log.Info($"  NR (RenoDX): state={this.Runtime.NrState} gpu={this.Runtime.NrCostMs}ms flicker={this.Runtime.NrFlickerStops} " +
                           $"stabilizer restarts={this.Runtime.NrStabilizerRestarts} contract={this.Runtime.NrContractSummary}");
         }
+
+        this.Pacing?.WriteStats();
 
         if (count > 0 && !this.modulesLoggedWithDlss)
         {

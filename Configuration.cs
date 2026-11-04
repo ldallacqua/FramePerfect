@@ -40,6 +40,15 @@ public enum MotionVectorScale
     RenderSize = 1,
 }
 
+/// <summary>NVIDIA Reflex low-latency mode (NvAPI_D3D_SetSleepMode).</summary>
+public enum ReflexMode
+{
+    Off = 0,
+    On = 1,
+    /// <summary>On, and keep GPU clocks up even when the GPU is mostly idle.</summary>
+    Boost = 2,
+}
+
 [Serializable]
 public sealed class Configuration : IPluginConfiguration
 {
@@ -68,6 +77,14 @@ public sealed class Configuration : IPluginConfiguration
 
     /// <summary>Tell in chat, after login and when it changes, whether the game's graphics options are right for the plugin.</summary>
     public bool ChatNotices { get; set; } = true;
+
+    public ReflexMode Reflex { get; set; } = ReflexMode.Off;
+
+    /// <summary>Driver frame cap through Reflex (NvAPI minimum frame interval), in fps. 0 = off.</summary>
+    public float FrameCapFps { get; set; } = 0f;
+
+    /// <summary>Give the game the refresh rate of the monitor its window is on (it reads the primary monitor once at startup).</summary>
+    public bool FixRefreshRate { get; set; } = true;
 
     /// <summary>How often the periodic DLSS statistics line is written to the log.</summary>
     public int StatsIntervalSeconds { get; set; } = 5;
