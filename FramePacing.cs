@@ -153,6 +153,9 @@ internal sealed unsafe partial class FramePacing : IDisposable
 
     public bool BlitModel => this.SwapEffect is 0 or 1;
 
+    /// <summary>The game's monitor is in HDR10 (Windows HDR on), read from IDXGIOutput6::GetDesc1 every 2 s.</summary>
+    public bool OutputHdr { get; private set; }
+
     /// <summary>Windows 11 "Optimizations for windowed games" (upgrades blit-model DX10/11 swap chains to flip model),
     /// read from HKCU\Software\Microsoft\DirectX\UserGpuPreferences: per-app value first, then the global one.</summary>
     public (bool? On, string Source) WindowedOptimizationsState { get; private set; } = (null, "?");
@@ -473,6 +476,24 @@ internal sealed unsafe partial class FramePacing : IDisposable
             DXGI_OUTPUT_DESC od;
             if (SUCCEEDED(output->GetDesc(&od)))
                 sb.Append($" | output {new string(MemoryMarshal.CreateReadOnlySpanFromNullTerminated((char*)&od.DeviceName))}");
+
+            // The display's current mode: Windows HDR on means DWM converts this SDR swap chain to HDR10 every frame.
+#pragma warning disable CA1416 // IDXGIOutput6 is Windows 10 1803+; the QueryInterface just fails on older systems
+            IDXGIOutput6* output6 = null;
+            var iid6 = IID.IID_IDXGIOutput6;
+            if (SUCCEEDED(output->QueryInterface(&iid6, (void**)&output6)) && output6 != null)
+            {
+                DXGI_OUTPUT_DESC1 od1;
+                if (SUCCEEDED(output6->GetDesc1(&od1)))
+                {
+                    this.OutputHdr = od1.ColorSpace == DXGI_COLOR_SPACE_TYPE.DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
+                    sb.Append(this.OutputHdr ? $" HDR10 ({od1.BitsPerColor}-bit, {od1.MaxLuminance:0} nits)" : $" SDR ({od1.ColorSpace})");
+                }
+
+                output6->Release();
+            }
+#pragma warning restore CA1416
+
             output->Release();
         }
 

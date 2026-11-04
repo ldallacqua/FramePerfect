@@ -148,7 +148,8 @@ internal sealed unsafe class TestRunner
 
         var t = Math.Max(1, this.ticks);
         this.plugin.Log.Info($"TEST step {this.step + 1}/{this.caps.Length} cap={(this.caps[this.step] > 0 ? $"{this.caps[this.step]:0}" : "off")} | " +
-                             $"focused {100.0 * this.focusedTicks / t:0}% G-Sync active {100.0 * this.gsyncTicks / t:0}% DLSS5 {this.nrSeen} | " +
+                             $"focused {100.0 * this.focusedTicks / t:0}% G-Sync active {100.0 * this.gsyncTicks / t:0}% DLSS5 {this.nrSeen} " +
+                             $"display {(this.plugin.Pacing.OutputHdr ? "HDR" : "SDR")} | " +
                              $"game frames {f} | DWM refreshes {v} | DWM compositions {c}");
     }
 
