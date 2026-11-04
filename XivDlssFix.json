@@ -2,7 +2,7 @@
   "Author": "Lucas",
   "Name": "DLSS Fix",
   "Punchline": "DLSS at a fixed internal resolution, no dynamic resolution.",
-  "Description": "Locks FFXIV's DLSS to a fixed internal resolution (DLAA / Quality / Balanced / Performance / Ultra Performance / Custom) instead of the game's dynamic resolution. Also picks the DLSS model preset, updates nvngx_dlss.dll from NVIDIA's official DLSS SDK, adds CAS sharpening and NVIDIA Reflex (low latency + precise frame cap), fixes the refresh rate the game reads on multi-monitor setups, and checks that the game's graphics options are set right.",
+  "Description": "Locks FFXIV's DLSS to a fixed internal resolution (DLAA / Quality / Balanced / Performance / Ultra Performance / Custom) instead of the game's dynamic resolution. Also picks the DLSS model preset, updates nvngx_dlss.dll from NVIDIA's official DLSS SDK, adds CAS sharpening and NVIDIA Reflex (low latency + precise frame cap), fixes the refresh rate the game reads on multi-monitor setups, checks that the game's graphics options are set right, and reads the live G-Sync state and the game's G-Sync driver profile settings.",
   "ApplicableVersion": "any",
   "Tags": ["dlss", "graphics", "upscaling"]
 }

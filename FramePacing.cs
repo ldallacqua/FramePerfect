@@ -301,6 +301,8 @@ internal sealed unsafe partial class FramePacing : IDisposable
             var (name, hz, primary) = Describe(MonitorFromWindow(hwnd, MonitorDefaultToNearest));
             this.WindowMonitor = primary ? $"{name} (primary)" : name;
             this.WindowHz = hz;
+            this.windowDevice = name == "?" ? string.Empty : name;
+            this.gameHwnd = hwnd;
         }
 
         var (pName, pHz, _) = Describe(MonitorFromPoint(default, MonitorDefaultToPrimary));
@@ -339,6 +341,8 @@ internal sealed unsafe partial class FramePacing : IDisposable
             this.lastDisplayLine = line;
             this.log.Info(line);
         }
+
+        this.CheckGsync();
     }
 
     private static string ReadConfig(string name)
@@ -652,6 +656,9 @@ internal sealed unsafe partial class FramePacing : IDisposable
         else
             yield return new SettingCheck("Game frame rate limit", LimitModeName(this.LimitMode, this.LimitFps), CheckLevel.Ok,
                                           capOn ? "Correct: the Reflex cap paces frames." : "OK.");
+
+        foreach (var c in this.GsyncChecks())
+            yield return c;
     }
 
     // ------------------------------------------------------------------ Win32

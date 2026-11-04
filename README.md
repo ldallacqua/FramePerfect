@@ -165,8 +165,12 @@ FFXIV has no V-Sync option because **its frame-rate limit is V-Sync**. `Kernel::
   - the game's limiter mode
   - swap chain model and flags, and the presentation mode: COMPOSED means DWM copies the frame, INDEPENDENT FLIP is direct
   - present-to-present pacing, and time spent inside the game's limiter + Present
-  - Reflex sleep status: `bFsVrr` says whether the driver has G-Sync engaged, plus control-panel V-Sync and iFlip
+  - Reflex sleep status: `bFsVrr` (G-Sync in **exclusive fullscreen** only; always False in borderless), control-panel V-Sync and iFlip
   - Reflex latency (simulation start → GPU done)
+  - **G-Sync, read from the driver** (read-only, never changes NVIDIA settings):
+    - live: `NvAPI_Disp_GetVRRInfo` on the game's monitor, once a second, plus whether the game window has focus (windowed G-Sync only runs on the focused window)
+    - saved: the G-Sync fields of the game's driver profile (`NvAPI_DRS_*`), every 15 s on a worker thread: "G-SYNC" (what NVIDIA Control Panel calls Monitor Technology), the hidden "Application Mode" and "Application Requested State", and the global mode
+    - the checklist shows one "G-Sync" line and flags the hidden-fields case below
 
 ### First in-game test (2026-11-04, 4K, 120 Hz, single monitor)
 
@@ -185,12 +189,27 @@ FFXIV has no V-Sync option because **its frame-rate limit is V-Sync**. `Kernel::
 
 0. Windows 11: Settings > System > Display > Graphics > **Optimizations for windowed games: On**. Restart the game, then check the Swap chain line in the checklist: "driver sees independent flip: yes".
 1. Game: frame rate limit **None**. Plugin: Reflex **On**, frame cap at a rate DLSS 5 always holds (e.g. 80), or the G-Sync cap if it can.
-2. NVIDIA Control Panel: `ffxiv_dx11.exe` Monitor Technology back to **G-SYNC**, V-Sync **On** (driver).
-3. Move the camera with DLSS 5 on and compare the log lines:
+2. NVIDIA Control Panel: `ffxiv_dx11.exe` Monitor Technology back to **G-SYNC**, V-Sync **On** (driver). Then check the checklist's "G-Sync" line: if it says "off for this game (hidden profile fields)", click **Restore** for the game in Program Settings (see below) and restart the game.
+3. Move the camera with DLSS 5 on (`NR (RenoDX): state=ENGAGED`) and compare the log lines:
+   - `GSYNC:` `active=True` with `game window focused=True`. This is the proof G-Sync is running; `REFLEX gsync(fsVrr)` stays False in borderless.
    - `PRESENT`: p05–p99 should be flat and swings near 0%.
-   - `REFLEX`: `gsync(fsVrr)=True`.
    - `SWAPCHAIN`: the presentation mode.
 4. If it still flickers with flat presents, the variation is after Present, in the DLSS 5 D3D11 → D3D12 bridge or in DWM. Fixed Refresh stays the answer.
+
+### G-Sync check (2026-11-04): Control Panel said G-SYNC, the driver kept it off
+
+After switching Monitor Technology from Fixed Refresh back to G-SYNC, there was no flicker at all. The driver showed why:
+
+- **Live:** `NvAPI_Disp_GetVRRInfo` on `\\.\DISPLAY1` with FFXIV focused: `active=False requested=False possible=True displayInVrrMode=True`. The monitor was ready for G-Sync, but nothing requested it.
+- **Driver profile** ("Final Fantasy XIV: A Realm Reborn", which holds `ffxiv_dx11.exe`):
+  - "G-SYNC" (Monitor Technology): not in the profile, so it inherits **allow** from global. That's what the Control Panel shows.
+  - "Enable G-SYNC globally" / "G-SYNC - Application Mode" (`0x1194F158`) = **Off**, user-set in the game profile
+  - "VRR requested state" / "G-SYNC - Application Requested State" (`0x1094F1F7`) = **Off**, user-set in the game profile
+  - global: both full screen and windowed
+- **Why:** the Control Panel doesn't show the two hidden fields and doesn't reset them when Monitor Technology goes from Fixed Refresh back to G-SYNC. This is a known Control Panel behavior ([Blur Busters forum](https://forums.blurbusters.com/viewtopic.php?p=108432)).
+- **The other user-set entries** in the profile were Power management mode (prefer maximum performance), Vertical Sync (use the 3D application setting), Vertical Sync Tear Control, Preferred refresh rate (application-controlled) and the SLI smooth AFR flag. A Restore resets these too.
+- **Fix:** NVIDIA Control Panel > Manage 3D settings > Program Settings > Final Fantasy XIV > **Restore**, or set both fields to "Fullscreen and Windowed" in NVIDIA Profile Inspector (Sync and Refresh). Then restart the game and check `GSYNC: ... active=True`.
+- **What the no-flicker session also had:** DLSS 5 ran at a flat 116 fps from 12:55 to 13:07, then was off (F6) from 13:08. So that session didn't test DLSS 5 + G-Sync at all.
 
 ## Findings (2026-11-04 test rounds)
 
@@ -216,7 +235,8 @@ FFXIV has no V-Sync option because **its frame-rate limit is V-Sync**. `Kernel::
     - `refresh rate: game value X Hz -> Y Hz` when the plugin corrects it
     - `SWAPCHAIN:` swap effect, buffers, flags, output and presentation mode. Written when something changes.
     - `PRESENT:` present-to-present p05/p50/p95/p99, swings, time inside the game's limiter + Present, sync interval and measured vblank rate. Every 5 s.
-    - `REFLEX:` mode, cap, driver sleep status (`gsync(fsVrr)`, `cplVsync`, `iFlip`, `gameSleep`) and latency. Every 5 s while Reflex or the cap is on.
+    - `REFLEX:` mode, cap, driver sleep status (`gsync(fsVrr)` = exclusive fullscreen G-Sync only, `cplVsync`, `iFlip`, `gameSleep`, `frameGen`) and latency. Every 5 s while Reflex or the cap is on.
+    - `GSYNC:` live VRR state of the game's monitor (`active`, `requested`, `possible`, `displayInVrrMode`, `indicator`), whether the game window has focus, and the G-Sync fields of the game's driver profile. Written when something changes.
     - `present thread id=..., framework thread id=...` once, to show whether presenting runs on its own thread
 - DLSS 5 (RenoDX): `ReShade.log` in the game folder (`DLSS5 Generic`, `NR-VERDICT`, `frame contract`). The plugin reads it incrementally on a worker thread for the Debug tab.
 

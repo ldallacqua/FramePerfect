@@ -372,9 +372,10 @@ internal sealed class ConfigWindow : Window
         ImGui.TextWrapped($"Presents: {(p.PresentStats.Length > 0 ? p.PresentStats : "?")}");
         var ss = p.LastSleepStatus;
         ImGui.TextWrapped($"Reflex: {p.ReflexState}" +
-                          (ss.HasValue ? $" | low latency {ss.Value.LowLatency}, G-Sync (driver) {ss.Value.FullscreenVrr}, control panel V-Sync {ss.Value.CplVsyncOn}, " +
+                          (ss.HasValue ? $" | low latency {ss.Value.LowLatency}, exclusive-fullscreen G-Sync {ss.Value.FullscreenVrr}, control panel V-Sync {ss.Value.CplVsyncOn}, " +
                                          $"iFlip {ss.Value.FullscreenIFlip}, game sleep {ss.Value.UseGameSleep}" : string.Empty) +
                           (p.ReflexLatency.Length > 0 ? $" | latency {p.ReflexLatency}" : string.Empty));
+        ImGui.TextWrapped($"G-Sync: {(p.GsyncSummary.Length > 0 ? p.GsyncSummary : "?")}");
 
         ImGui.Separator();
         ImGui.TextWrapped($"Log: {this.plugin.Log.FilePath}");
