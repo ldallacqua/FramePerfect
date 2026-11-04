@@ -10,7 +10,7 @@ using TerraFX.Interop.DirectX;
 using TerraFX.Interop.Windows;
 using static TerraFX.Interop.Windows.Windows;
 
-namespace XivDlssFix;
+namespace FramePerfect;
 
 /// <summary>
 /// Refresh rate, frame limiter and NVIDIA Reflex. Reverse engineered from ffxiv_dx11.exe 2026.10.16:
@@ -643,6 +643,9 @@ sb.Append($" {this.OutputColor}"); // from a fresh DXGI factory on the G-Sync wo
 
     public static int SyncInterval(uint mode) => mode is >= 1 and <= 4 ? (int)mode : 0;
 
+    /// <summary>Frame Perfect sets the game's frame rate limit itself (Game settings page).</summary>
+    private bool FrameLimitManaged => this.config.AutoGameSettings && this.config.ManageFrameLimit;
+
     private static float Pct(float[] v, double p)
     {
         var c = (float[])v.Clone();
@@ -676,24 +679,17 @@ sb.Append($" {this.OutputColor}"); // from a fresh DXGI factory on the G-Sync wo
                                           $"The game read {orig} Hz at startup (primary monitor), but its window is on a {this.WindowHz} Hz monitor. " +
                                           "Turn on \"Use the refresh rate of the monitor the game is on\".");
 
-        if (this.BlitModel && !this.Fullscreen)
-        {
-            var (on, source) = this.WindowedOptimizationsState;
-            var iflip = this.LastSleepStatus?.FullscreenIFlip;
-            var state = $"Optimizations for windowed games: {(on == true ? "on" : on == false ? "off" : "not set")} ({source})" +
-                        (iflip.HasValue ? $", driver sees independent flip: {(iflip.Value ? "yes" : "no")}" : string.Empty);
-            yield return new SettingCheck("Swap chain", "legacy blit model (BLT_DISCARD)", iflip == true ? CheckLevel.Ok : CheckLevel.Info,
-                                          "In borderless, Windows composites every frame of a blit-model swap chain: a little more latency, " +
-                                          "and G-Sync only through NVIDIA's windowed G-Sync, which is what flickered. Windows 11 can upgrade it to " +
-                                          "flip model: Settings > System > Display > Graphics > Optimizations for windowed games (restart the game). " +
-                                          $"Now: {state}.");
-        }
-
+        // (The swap chain / "Optimizations for windowed games" state is diagnostics only: PresentMon showed Windows never
+        // upgrades FFXIV's swap chain, so there is nothing for the player to do. It's on the Diagnostics page.)
         var capOn = this.CapNow().Rendered > 0 && this.ReflexAvailable;
-        if (capOn && this.LimitMode != 0)
+        if (capOn && this.LimitMode != 0 && this.FrameLimitManaged)
+            yield return new SettingCheck("Game frame rate limit", LimitModeName(this.LimitMode, this.LimitFps), CheckLevel.Info,
+                                          "Frame Perfect switches it to None as soon as System Configuration is closed, so only its own cap paces frames.");
+        else if (capOn && this.LimitMode != 0)
             yield return new SettingCheck("Game frame rate limit", LimitModeName(this.LimitMode, this.LimitFps), CheckLevel.Recommend,
-                                          "Set it to None (System Configuration > Display Settings) so only the Reflex cap paces frames. " +
-                                          "The game's limiter is V-Sync in whole refresh steps and fights the cap.");
+                                          "Set it to None (System Configuration > Display Settings) so only Frame Perfect's cap paces frames, " +
+                                          "or tick it in Frame Perfect > Game settings and it's done for you. " +
+                                          "The game's limit is V-Sync in whole refresh steps and fights the cap.");
         else if (this.LimitMode is >= 2 and <= 4)
             yield return new SettingCheck("Game frame rate limit", LimitModeName(this.LimitMode, this.LimitFps), CheckLevel.Info,
                                           "Every frame waits for whole refreshes: when the GPU misses one, the frame time doubles (e.g. 16.7 -> 33.3 ms). " +

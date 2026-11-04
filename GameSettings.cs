@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using GraphicsConfig = FFXIVClientStructs.FFXIV.Client.Graphics.Render.GraphicsConfig;
 
-namespace XivDlssFix;
+namespace FramePerfect;
 
 internal enum CheckLevel
 {
@@ -56,38 +56,43 @@ internal static unsafe class GameSettings
         _ => $"? ({v})",
     };
 
-    public static List<SettingCheck> Evaluate(Snapshot s, Configuration config, FramePacing? pacing = null)
+    public static List<SettingCheck> Evaluate(Plugin plugin)
     {
+        var s = Read();
+        var config = plugin.Config;
+        var opt = plugin.Optimizer;
         var list = new List<SettingCheck>();
         if (!s.Valid)
             return list;
 
-        list.Add(s.Upscale == 2
-            ? new SettingCheck("Graphics Upscaling", UpscaleName(s.Upscale), CheckLevel.Ok, "Correct. The plugin only works with DLSS.")
-            : new SettingCheck("Graphics Upscaling", UpscaleName(s.Upscale), CheckLevel.Change,
-                               $"Switch to NVIDIA DLSS: {ResolutionPath} > Graphics Upscaling."));
-
         if (s.Upscale == 2)
-        {
-            list.Add(config.Enabled && config.LockResolution && config.Mode != DlssMode.GameDefault
-                ? new SettingCheck("Frame Rate Threshold", ThresholdName(s.Threshold), CheckLevel.Ok,
-                                   "Any option works: with the lock the resolution never changes.")
-                : new SettingCheck("Frame Rate Threshold", ThresholdName(s.Threshold), CheckLevel.Info,
-                                   "Without the lock, this sets when the game lowers the resolution: Always Enabled = whenever the GPU can't " +
-                                   "keep up with the frame cap / refresh rate; Below 60 or 30 fps = only below that."));
+            list.Add(new SettingCheck("Graphics Upscaling", UpscaleName(s.Upscale), CheckLevel.Ok,
+                                      opt.IsManaged(GameOptimizer.Upscaling) ? "Correct (kept on NVIDIA DLSS by Frame Perfect)." : "Correct."));
+        else if (opt.IsManaged(GameOptimizer.Upscaling) && opt.Wanted(GameOptimizer.Upscaling) != null)
+            list.Add(new SettingCheck("Graphics Upscaling", UpscaleName(s.Upscale), CheckLevel.Info,
+                                      "Frame Perfect switches it to NVIDIA DLSS as soon as System Configuration is closed."));
+        else if (GameOptimizer.NvidiaRtx == false)
+            list.Add(new SettingCheck("Graphics Upscaling", UpscaleName(s.Upscale), CheckLevel.Change,
+                                      $"DLSS needs an NVIDIA RTX graphics card ({(GameOptimizer.GpuName.Length > 0 ? GameOptimizer.GpuName : "none found")}). " +
+                                      "Without it Frame Perfect can't change the image; the frame rate features need an NVIDIA card too."));
+        else
+            list.Add(new SettingCheck("Graphics Upscaling", UpscaleName(s.Upscale), CheckLevel.Change,
+                                      $"Switch to NVIDIA DLSS: {ResolutionPath} > Graphics Upscaling, or tick it in Frame Perfect > Game settings."));
 
-            list.Add(new SettingCheck("3D Resolution Scaling", $"{s.RezoScale * 100:0}", CheckLevel.Ok,
-                                      "Ignored with DLSS: the plugin's mode sets the internal resolution."));
-        }
+        if (s.Upscale == 2 && !(config.Enabled && config.LockResolution && config.Mode != DlssMode.GameDefault))
+            list.Add(new SettingCheck("Frame Rate Threshold", ThresholdName(s.Threshold), CheckLevel.Info,
+                                      "The DLSS resolution isn't locked, so this decides when the game lowers it: Always Enabled = whenever the GPU " +
+                                      "can't keep up; Below 60 or 30 fps = only below that."));
 
-        list.Add(s.RadialBlur
-            ? new SettingCheck("Radial Blur", "on", CheckLevel.Recommend,
-                               $"Recommended off: {EffectsPath} > Radial Blur. It blurs the image when the camera moves.")
-            : new SettingCheck("Radial Blur", "off", CheckLevel.Ok, "Correct."));
+        if (s.RadialBlur && opt.IsManaged(GameOptimizer.RadialBlur))
+            list.Add(new SettingCheck("Radial Blur", "on", CheckLevel.Info, "Frame Perfect turns it off as soon as System Configuration is closed."));
+        else if (s.RadialBlur)
+            list.Add(new SettingCheck("Radial Blur", "on", CheckLevel.Recommend,
+                                      $"Recommended off: {EffectsPath} > Radial Blur. It blurs the image when the camera moves."));
+        else
+            list.Add(new SettingCheck("Radial Blur", "off", CheckLevel.Ok, "Correct."));
 
-        if (pacing != null)
-            list.AddRange(pacing.Checks());
-
+        list.AddRange(plugin.Pacing.Checks());
         return list;
     }
 
@@ -101,71 +106,44 @@ internal static unsafe class GameSettings
     };
 }
 
-/// <summary>Prints the game-settings advice to chat once after login and whenever the relevant options change.</summary>
+/// <summary>
+/// After login, one notification if something needs the player (a setting the plugin can't change itself). Everything
+/// the plugin fixes on its own is reported by <see cref="GameOptimizer"/>; everything else is on the Overview page.
+/// </summary>
 internal sealed class GameSettingsNotifier
 {
     private readonly Plugin plugin;
-    private string printed = string.Empty;
-    private string pending = string.Empty;
-    private DateTime pendingSince;
+    private string shown = string.Empty;
+    private DateTime loggedInAt = DateTime.MaxValue;
 
     public GameSettingsNotifier(Plugin plugin) => this.plugin = plugin;
 
     public void Tick()
     {
-        var cfg = this.plugin.Config;
         if (!Plugin.ClientState.IsLoggedIn)
         {
-            this.printed = this.pending = string.Empty; // say it again after the next login
+            this.shown = string.Empty; // say it again after the next login
+            this.loggedInAt = DateTime.MaxValue;
             return;
         }
 
-        if (!cfg.ChatNotices || !cfg.Enabled)
+        if (this.loggedInAt == DateTime.MaxValue)
+            this.loggedInAt = DateTime.Now;
+        var cfg = this.plugin.Config;
+        if (!cfg.ChatNotices || !cfg.Enabled || (DateTime.Now - this.loggedInAt).TotalSeconds < 8)
+            return; // give the automatic settings and the driver reads a few seconds first
+
+        var todo = GameSettings.Evaluate(this.plugin).FindAll(c => c.Level == CheckLevel.Change);
+        var key = string.Join(";", todo.ConvertAll(c => c.Option + c.Current));
+        if (key == this.shown)
+            return;
+        this.shown = key;
+        if (todo.Count == 0)
             return;
 
-        var s = GameSettings.Read();
-        if (!s.Valid)
-            return;
-
-        var pacing = this.plugin.Pacing;
-        var pacingIssues = new List<SettingCheck>();
-        foreach (var c in pacing.Checks())
-            if (c.Level is CheckLevel.Change or CheckLevel.Recommend || (c.Option.StartsWith("Refresh") && c.Advice.StartsWith("Corrected")))
-                pacingIssues.Add(c);
-        var key = $"{s.Upscale}|{s.RadialBlur}|{cfg.Mode}|{cfg.LockResolution}|{string.Join(";", pacingIssues.ConvertAll(c => c.Option + c.Current + c.Level))}";
-        if (key == this.printed)
-            return;
-        if (key != this.pending)
-        {
-            // wait until the option has stayed put for a moment (the player may still be in the menu)
-            this.pending = key;
-            this.pendingSince = DateTime.Now;
-            return;
-        }
-
-        if ((DateTime.Now - this.pendingSince).TotalSeconds < 1.5)
-            return;
-
-        this.printed = key;
-        if (s.Upscale != 2)
-        {
-            Plugin.Chat.PrintError($"[DLSS Fix] The game is set to {GameSettings.UpscaleName(s.Upscale)}, so the plugin has no effect. " +
-                                   $"Change {GameSettings.ResolutionPath} > Graphics Upscaling to NVIDIA DLSS.");
-        }
-        else
-        {
-            var res = cfg.Mode == DlssMode.GameDefault ? "game's dynamic resolution (plugin only observing)"
-                : cfg.LockResolution ? $"{this.plugin.Controller.ModeLabel} mode, resolution locked"
-                : $"{this.plugin.Controller.ModeLabel} mode, dynamic resolution";
-            Plugin.Chat.Print($"[DLSS Fix] Game settings OK: Graphics Upscaling = NVIDIA DLSS. {res}.");
-        }
-
-        if (s.RadialBlur)
-            Plugin.Chat.Print($"[DLSS Fix] Recommended: turn off {GameSettings.EffectsPath} > Radial Blur (it blurs the image when the camera moves).");
-
-        foreach (var c in pacingIssues)
-            Plugin.Chat.Print($"[DLSS Fix] {GameSettings.LevelTag(c.Level)} {c.Option} = {c.Current}: {c.Advice}");
-
-        this.plugin.Log.Info($"chat notice: upscaling={GameSettings.UpscaleName(s.Upscale)} threshold={GameSettings.ThresholdName(s.Threshold)} radialBlur={s.RadialBlur}");
+        var first = todo[0];
+        this.plugin.Notify($"{first.Option} is {first.Current}. {first.Advice}" + (todo.Count > 1 ? $" (+{todo.Count - 1} more in /frameperfect)" : string.Empty),
+                           Dalamud.Interface.ImGuiNotification.NotificationType.Warning);
+        this.plugin.Log.Info($"notice: {string.Join(" | ", todo.ConvertAll(c => $"{c.Option}={c.Current}: {c.Advice}"))}");
     }
 }

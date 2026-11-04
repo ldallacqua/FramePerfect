@@ -8,7 +8,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace XivDlssFix;
+namespace FramePerfect;
 
 /// <summary>
 /// Which DLSS DLLs are actually loaded in the process right now, plus what the RenoDX DLSS5 addon

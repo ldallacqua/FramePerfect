@@ -3,10 +3,10 @@ using System.Collections.Concurrent;
 using System.IO;
 using System.Text;
 
-namespace XivDlssFix;
+namespace FramePerfect;
 
 /// <summary>
-/// Plain-text log at pluginConfigs\XivDlssFix\dlssfix.log (plus a copy in dalamud.log).
+/// Plain-text log at pluginConfigs\FramePerfect\frameperfect.log (plus a copy in dalamud.log).
 /// Lines from other threads (e.g. the render thread) are queued and flushed on the framework thread.
 /// </summary>
 internal sealed class FileLog : IDisposable
@@ -20,7 +20,7 @@ internal sealed class FileLog : IDisposable
     public FileLog(string directory)
     {
         Directory.CreateDirectory(directory);
-        this.FilePath = Path.Combine(directory, "dlssfix.log");
+        this.FilePath = Path.Combine(directory, "frameperfect.log");
         try
         {
             var info = new FileInfo(this.FilePath);

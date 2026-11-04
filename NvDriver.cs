@@ -4,7 +4,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace XivDlssFix;
+namespace FramePerfect;
 
 /// <summary>
 /// Read-only NVAPI queries about G-Sync: the live VRR state of a display (NvAPI_Disp_GetVRRInfo) and the

@@ -7,7 +7,7 @@ using TerraFX.Interop.DirectX;
 using TerraFX.Interop.Windows;
 using static TerraFX.Interop.DirectX.DirectX;
 
-namespace XivDlssFix;
+namespace FramePerfect;
 
 /// <summary>
 /// G-Sync state, read from the driver (see <see cref="NvDriver"/>): is VRR live on the game's monitor, and what does the

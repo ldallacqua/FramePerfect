@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
-namespace XivDlssFix;
+namespace FramePerfect;
 
 /// <summary>
 /// NVIDIA Smooth Motion (driver frame generation: one generated frame between every two the game renders) and the
@@ -199,11 +199,12 @@ internal sealed unsafe partial class FramePacing
         {
             var (shown, rendered) = this.CapNow();
             var screen = this.vrrForGame == false ? "fixed refresh" : "G-Sync";
-            var gameLimiterOk = this.LimitMode == 0;
+            var gameLimiterOk = this.LimitMode == 0 || this.FrameLimitManaged;
             yield return new SettingCheck("Smooth Motion", $"on ({this.FrameMultiplier}x)", gameLimiterOk ? CheckLevel.Ok : CheckLevel.Recommend,
                                           $"The driver generates every other frame. The plugin caps the game at {rendered:0.##} fps so you see {shown:0.##} " +
                                           $"({screen}, {this.RefreshHz:0.##} Hz). " +
-                                          (gameLimiterOk ? string.Empty
+                                          (this.LimitMode == 0 ? string.Empty
+                                              : gameLimiterOk ? "Frame Perfect switches the game's frame rate limit to None when System Configuration closes. "
                                               : "Set the game's frame rate limit to None: Smooth Motion ignores the game's V-Sync, and the refresh lock needs it off. ") +
                                           "Smooth Motion adds about one rendered frame of latency; turn it off in the NVIDIA app if input feels slow.");
         }

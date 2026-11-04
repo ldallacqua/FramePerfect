@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
-namespace XivDlssFix;
+namespace FramePerfect;
 
 /// <summary>
 /// NVIDIA Reflex through NVAPI (nvapi64.dll ships with the driver). Works on D3D11.

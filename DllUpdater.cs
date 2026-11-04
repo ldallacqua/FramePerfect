@@ -10,7 +10,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace XivDlssFix;
+namespace FramePerfect;
 
 /// <summary>
 /// Updates the game's nvngx_dlss.dll (FFXIV ships 3.5.10) from NVIDIA's official DLSS SDK repository,
@@ -206,7 +206,7 @@ internal sealed partial class DllUpdater
     private static HttpClient CreateClient()
     {
         var c = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
-        c.DefaultRequestHeaders.UserAgent.ParseAdd("XivDlssFix-Dalamud-plugin");
+        c.DefaultRequestHeaders.UserAgent.ParseAdd("FramePerfect-Dalamud-plugin");
         c.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
         return c;
     }

@@ -6,10 +6,10 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using FFXIVClientStructs.FFXIV.Client.Game.Control;
 
-namespace XivDlssFix;
+namespace FramePerfect;
 
 /// <summary>
-/// /dlssfix test: an unattended G-Sync / frame-pacing test. It steps through frame caps while turning the camera at a
+/// /frameperfect test: an unattended G-Sync / frame-pacing test. It steps through frame caps while turning the camera at a
 /// constant speed. For each step it logs the game's frame cadence next to what the Windows compositor (DWM)
 /// actually refreshed (DwmGetCompositionTimingInfo, sampled on a worker thread), plus focus, G-Sync and DLSS 5 state.
 /// Restores the cap and the camera's turn when it ends or is stopped.
@@ -71,7 +71,7 @@ internal sealed unsafe class TestRunner
         this.plugin.Config.FrameCapAuto = this.savedAuto;
         this.step = -1;
         this.plugin.Log.Info($"TEST: {why} | cap restored to {(this.savedCap > 0 ? $"{this.savedCap:0.#}" : "off")}");
-        Plugin.Chat.Print($"[DLSS Fix] test {why}. Results are in the log (TEST lines); the cap is back to {(this.savedCap > 0 ? $"{this.savedCap:0.#}" : "off")}.");
+        Plugin.Chat.Print($"[Frame Perfect] test {why}. Results are in the log (TEST lines); the cap is back to {(this.savedCap > 0 ? $"{this.savedCap:0.#}" : "off")}.");
     }
 
     /// <summary>Framework thread, every frame.</summary>
@@ -137,7 +137,7 @@ internal sealed unsafe class TestRunner
 
         this.ticks = this.focusedTicks = this.gsyncTicks = 0;
         this.nrSeen = string.Empty;
-        Plugin.Chat.Print($"[DLSS Fix] test step {index + 1}/{this.caps.Length}: cap {(this.caps[index] > 0 ? $"{this.caps[index]:0}" : "off")} for {this.stepSeconds:0} s");
+        Plugin.Chat.Print($"[Frame Perfect] test step {index + 1}/{this.caps.Length}: cap {(this.caps[index] > 0 ? $"{this.caps[index]:0}" : "off")} for {this.stepSeconds:0} s");
     }
 
     private void EndStep()

@@ -4,7 +4,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
 
-namespace XivDlssFix;
+namespace FramePerfect;
 
 /// <summary>
 /// Refresh lock: with a fixed refresh rate in borderless, keep the game's presents in the middle between two refreshes.

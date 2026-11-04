@@ -1,7 +1,8 @@
 using System;
+using System.Collections.Generic;
 using Dalamud.Configuration;
 
-namespace XivDlssFix;
+namespace FramePerfect;
 
 /// <summary>DLSS quality mode. Values 1..6 are the game's own GraphicsConfig+0x55 codes.</summary>
 public enum DlssMode
@@ -52,7 +53,8 @@ public enum ReflexMode
 [Serializable]
 public sealed class Configuration : IPluginConfiguration
 {
-    public int Version { get; set; } = 1;
+    /// <summary>2 = Frame Perfect (renamed from DLSS Fix, settings carried over).</summary>
+    public int Version { get; set; } = 2;
 
     public bool Enabled { get; set; } = true;
 
@@ -75,17 +77,38 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>Measure the brightness of every frame and log short light/dark blinks (FLASH lines).</summary>
     public bool FlashDetector { get; set; } = true;
 
-    /// <summary>Tell in chat, after login and when it changes, whether the game's graphics options are right for the plugin.</summary>
+    /// <summary>Show a notification when the plugin changes a game option, or when something needs the player's attention.</summary>
     public bool ChatNotices { get; set; } = true;
 
-    public ReflexMode Reflex { get; set; } = ReflexMode.Off;
+    /// <summary>Set the game options the plugin needs (see <see cref="GameOptimizer"/>). Each one can be left to the player below.</summary>
+    public bool AutoGameSettings { get; set; } = true;
+
+    /// <summary>Graphics Upscaling = NVIDIA DLSS (only on an NVIDIA RTX graphics card).</summary>
+    public bool ManageUpscaling { get; set; } = true;
+
+    /// <summary>Frame Rate Limit = None while the plugin's own frame cap runs (the game's limiter is V-Sync in whole refresh steps).</summary>
+    public bool ManageFrameLimit { get; set; } = true;
+
+    /// <summary>Radial Blur = off (it smears the image when the camera turns).</summary>
+    public bool ManageRadialBlur { get; set; } = true;
+
+    /// <summary>The player's own values, from before the plugin changed them, so they can be put back (option name -> value).</summary>
+    public Dictionary<string, uint> SavedGameSettings { get; set; } = new();
+
+    /// <summary>Show the frame rate in the server info bar (top right). Click it to open the window.</summary>
+    public bool ShowServerInfoBar { get; set; } = true;
+
+    /// <summary>The welcome card on the Overview page was dismissed.</summary>
+    public bool WelcomeDismissed { get; set; }
+
+    public ReflexMode Reflex { get; set; } = ReflexMode.On;
 
     /// <summary>Driver frame cap through Reflex (NvAPI minimum frame interval): the frame rate you see, in fps. 0 = off.
     /// With Smooth Motion the game is capped at half of it (the driver generates the other half).</summary>
     public float FrameCapFps { get; set; } = 0f;
 
     /// <summary>The plugin picks the cap: the G-Sync cap with G-Sync, the refresh rate with Fixed Refresh (halved for rendering with Smooth Motion).</summary>
-    public bool FrameCapAuto { get; set; } = false;
+    public bool FrameCapAuto { get; set; } = true;
 
     /// <summary>With Fixed Refresh in borderless, start every frame at the same point of the refresh (keeps presents away
     /// from the moment DWM picks the next frame, where they get dropped).</summary>

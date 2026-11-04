@@ -9,7 +9,7 @@ using GraphicsConfig = FFXIVClientStructs.FFXIV.Client.Graphics.Render.GraphicsC
 using RenderManager = FFXIVClientStructs.FFXIV.Client.Graphics.Render.Manager;
 using RenderTargetManager = FFXIVClientStructs.FFXIV.Client.Graphics.Render.RenderTargetManager;
 
-namespace XivDlssFix;
+namespace FramePerfect;
 
 /// <summary>
 /// How the game drives DLSS (reverse engineered from ffxiv_dx11.exe 2026.10.16):
@@ -170,7 +170,7 @@ internal sealed unsafe class DlssController : IDisposable
         this.log = log;
 
         var module = Process.GetCurrentProcess().MainModule!;
-        log.Info($"==== DLSS Fix start | exe={module.FileName} base=0x{module.BaseAddress:X} game={ReadGameVersion(module.FileName)}");
+        log.Info($"==== Frame Perfect start | exe={module.FileName} base=0x{module.BaseAddress:X} game={ReadGameVersion(module.FileName)}");
         this.Runtime = new RuntimeInfo(Path.GetDirectoryName(module.FileName)!);
         this.sharpener = new Sharpener(log);
         this.probe = new FrameProbe(log);
@@ -848,7 +848,7 @@ internal sealed unsafe class DlssController : IDisposable
             this.log.Warn($"restore on dispose failed: {e.Message}");
         }
 
-        this.log.Info("==== DLSS Fix stopped");
+        this.log.Info("==== Frame Perfect stopped");
     }
 }
 
