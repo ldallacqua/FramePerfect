@@ -136,7 +136,7 @@ internal sealed unsafe class Reflex : IDisposable
         this.LastMarkerStatus = this.setMarker(this.device, p);
     }
 
-    public readonly record struct SleepStatus(int Result, bool LowLatency, bool FullscreenVrr, bool CplVsyncOn, uint SleepIntervalUs, bool UseGameSleep, bool FullscreenIFlip);
+    public readonly record struct SleepStatus(int Result, bool LowLatency, bool FullscreenVrr, bool CplVsyncOn, uint SleepIntervalUs, bool UseGameSleep, bool FullscreenIFlip, byte FgMultiplier);
 
     public SleepStatus GetSleepStatus()
     {
@@ -144,7 +144,7 @@ internal sealed unsafe class Reflex : IDisposable
         new Span<byte>(p, SleepStatusSize).Clear();
         *(uint*)p = SleepStatusSize | (1u << 16);
         var st = this.getSleepStatus(this.device, p);
-        return new SleepStatus(st, p[4] != 0, p[5] != 0, p[6] != 0, *(uint*)(p + 8), p[12] != 0, p[13] != 0);
+        return new SleepStatus(st, p[4] != 0, p[5] != 0, p[6] != 0, *(uint*)(p + 8), p[12] != 0, p[13] != 0, p[14]); // p[14] = fgMultiplier: latest frame generation multiplier the driver used
     }
 
     public readonly record struct FrameReport(ulong FrameId, ulong SimStart, ulong PresentStart, ulong PresentEnd, ulong DriverStart, ulong OsQueueStart, ulong GpuRenderStart, ulong GpuRenderEnd, uint GpuActiveUs, uint GpuFrameUs);

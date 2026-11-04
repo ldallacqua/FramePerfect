@@ -588,7 +588,7 @@ internal sealed unsafe partial class FramePacing : IDisposable
 
             this.log.Info($"  REFLEX: {this.config.Reflex} cap={(this.config.FrameCapFps > 0 ? $"{this.config.FrameCapFps:0.#} fps" : "off")} | " +
                           $"status={s.Result} lowLatency={s.LowLatency} gsync(fsVrr)={s.FullscreenVrr} cplVsync={s.CplVsyncOn} iFlip={s.FullscreenIFlip} " +
-                          $"gameSleep={s.UseGameSleep} sleepInterval={s.SleepIntervalUs}us | sleep={r.LastSleepStatus} marker={r.LastMarkerStatus} | {lat}");
+                          $"gameSleep={s.UseGameSleep} sleepInterval={s.SleepIntervalUs}us frameGen={(s.FgMultiplier > 1 ? $"{s.FgMultiplier}x" : "off")} | sleep={r.LastSleepStatus} marker={r.LastMarkerStatus} | {lat}");
         }
     }
 
